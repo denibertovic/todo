@@ -1,0 +1,57 @@
+name:                todo
+version:             0.1.0.0
+github:              "denibertovic/todo"
+license:             BSD3
+author:              "Deni Bertovic"
+maintainer:          "deni@denibertovic.com"
+copyright:           "2018 Deni Bertovic"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on Github at <https://github.com/denibertovic/todo#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- text
+- yaml
+- aeson
+- time
+- unordered-containers
+- parsec
+- pretty-simple
+
+library:
+  source-dirs: src
+
+executables:
+  todo-exe:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - todo
+
+tests:
+  todo-test:
+    main:                Main.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - hspec
+    - todo
+
