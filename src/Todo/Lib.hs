@@ -3,17 +3,15 @@
 
 module Todo.Lib where
 
-import           Control.Monad       (void)
-import           Control.Monad       (join)
+import           Control.Monad       (join, void)
 import           Data.Bool           (not)
-import           Data.Char           (GeneralCategory (..), isSeparator)
-import           Data.Char           (isAlphaNum)
 import qualified Data.HashMap.Strict as HM
 import           Data.List           (nub)
 import           Data.Monoid         ((<>))
 import           Data.Text           (Text)
 import qualified Data.Text           as T
 import qualified Data.Text.IO        as TIO
+import           Data.Time.Calendar  (Day (..), fromGregorian)
 import           Data.Void           (Void)
 import           Text.Pretty.Simple  (pPrint)
 
@@ -30,6 +28,30 @@ someFunc = putStrLn "someFunc"
 sc :: Parser ()
 sc = skipMany $ char ' '
 
+-- |Date: 2017-02-23
+-- Supports 2 or 4 digit year, and 1 or 2 digit month and day.
+date :: Parser Day
+date = do
+    year <- twoToFourDigits
+    _ <- char '-'
+    month <- oneToTwoDigits
+    _ <- char '-'
+    day <- oneToTwoDigits
+    return $ fromGregorian (convertYear $ read year) (read month) (read day)
+  where oneToTwoDigits = do
+          x <- digit
+          y <- option ' ' $ digit
+          return (x:y:[])
+        twoToFourDigits = do
+          w <- digit
+          x <- digit
+          y <- option ' ' $ digit
+          z <- option ' ' $ digit
+          return (w:x:y:z:[])
+        convertYear x = if x < 100
+                        then x + 2000
+                        else x
+
 priority :: Parser Priority
 priority = do
   _ <- char '('
@@ -39,7 +61,7 @@ priority = do
   return $ read [p]
 
 context :: Parser Metadata
-context = do
+context = try $ do
   _ <- char '@'
   -- ctx <- manyTill alphaNum (space <|> endOfLine)
   ctx <- many1 (noneOf " \n\r\t")
@@ -47,7 +69,7 @@ context = do
   return $ MetadataContext $ Context $ T.pack ctx
 
 project :: Parser Metadata
-project = do
+project = try $ do
   _ <- char '+'
   -- p <- manyTill alphaNum (space <|> endOfLine)
   p <- many1 (noneOf " \n\r\t")
@@ -55,18 +77,36 @@ project = do
   return $ MetadataProject $ Project $ T.pack p
 
 tag :: Parser Metadata
-tag = do
+tag = try $ do
   key <- tagKey
   _ <- char ':'
   value <- tagValue
   sc
-  return $ MetadataTag (key, value)
+  return $ MetadataTag $ Tag key value
 
 tagKey :: Parser String
 tagKey = many1 (noneOf ": \n\r\t")
 
 tagValue :: Parser String
-tagValue = manyTill (noneOf " \n\r\t") (space <|> endOfLine)
+tagValue = many1 (noneOf " \n\r\t")
+
+duedate :: Parser Metadata
+duedate = try $ do
+  _ <- string "due:"
+  d <- date
+  _ <- sc
+  return $ MetadataTag $ TagDueDate d
+
+colon :: Parser Char
+colon = char ':'
+
+link :: Parser Metadata
+link = try $ do
+  proto <- string "https:" <|> string "http:"
+  rest <- many1 $ noneOf " \n\r\t"
+  _ <- sc
+  return $ MetadataLink $ Link $ proto <> rest
+
 
 word :: Parser Metadata
 word = do
@@ -76,30 +116,38 @@ word = do
   return $ MetadataString word
 
 metadata :: Parser Metadata
-metadata = do
+metadata =
   -- tags need to be at the end of the line as per the spec so they'll get
   -- tried last
-  m <- project <|> context <|> try word <|> tag
-  return m
+  choice [ project, context, link, tag, word ]
 
 incompleteTask :: Parser Todo
 incompleteTask = do
-  pri <- optionMaybe priority
-  -- startDate <- optionMaybe date
-  m <- many1 $ metadata
-  _ <- endOfLine
-  let desc = [ T.pack s | x@(MetadataString s) <- m]
-  let m' = filter (not . isMetadataString) m
-  return $ Incomplete TodoItem { tDescription=T.intercalate " " desc
-                               , tPriority=pri
-                               , tCreatedAt=Nothing
-                               , tDueAt=Nothing
-                               , tMetadata=m'}
+    pri <- optionMaybe priority
+    -- startDate <- optionMaybe date
+    m <- many1 metadata
+    _ <- endOfLine
+    let m' = filter (isMetadataStringOrLink) m
+    let desc = [ packIt x | x <- m']
+    let m'' = filter (not . isMetadataStringOrLink) m
+    return $ Incomplete TodoItem { tDescription=T.intercalate " " desc
+                                 , tPriority=pri
+                                 , tCreatedAt=Nothing
+                                 , tDueAt=Nothing
+                                 , tMetadata=m''}
+  where packIt (MetadataString s)      = T.pack s
+        packIt (MetadataLink (Link s)) = T.pack s
 
 isMetadataString :: Metadata -> Bool
 isMetadataString m = case m of
   MetadataString _ -> True
-  otherwsie        -> False
+  otherwise        -> False
+
+isMetadataStringOrLink :: Metadata -> Bool
+isMetadataStringOrLink m = case m of
+  MetadataString _ -> True
+  MetadataLink _   -> True
+  otherwise        -> False
 
 -- |Complete Task
 -- It is assumed that a completed task starts with x and a optional completion
