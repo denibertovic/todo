@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Test.Parser.ParserSpec where
 
-import           Todo.Lib
+import           Todo.Parser
 import           Todo.Types
 
 import           Data.Monoid        ((<>))
@@ -100,7 +100,7 @@ sampleMetadata = [ MetadataProject $ Project "project"
 sampleTodo = Incomplete TodoItem { tDescription="foo bar"
                                  , tPriority=Nothing
                                  , tCreatedAt=Nothing
-                                 , tDueAt=Nothing
+                                 , tDoneAt=Nothing
                                  , tMetadata=[ MetadataProject $ Project "project"
                                              , MetadataContext $ Context "context"
                                              , MetadataContext $ Context "context2"
@@ -111,7 +111,7 @@ sampleTodo = Incomplete TodoItem { tDescription="foo bar"
 sampleTodoPriA = Incomplete TodoItem { tDescription="foo bar"
                                  , tPriority=Just A
                                  , tCreatedAt=Nothing
-                                 , tDueAt=Nothing
+                                 , tDoneAt=Nothing
                                  , tMetadata=[ MetadataProject $ Project "project"
                                              , MetadataContext $ Context "context"
                                              , MetadataContext $ Context "context2"
@@ -122,7 +122,7 @@ sampleTodoPriA = Incomplete TodoItem { tDescription="foo bar"
 sampleTodoPriAWithTags = Incomplete TodoItem { tDescription="foo bar"
                                  , tPriority=Just A
                                  , tCreatedAt=Nothing
-                                 , tDueAt=Nothing
+                                 , tDoneAt=Nothing
                                  , tMetadata=[ MetadataProject $ Project "project"
                                              , MetadataContext $ Context "context"
                                              , MetadataContext $ Context "context2"
@@ -130,9 +130,9 @@ sampleTodoPriAWithTags = Incomplete TodoItem { tDescription="foo bar"
                                              , MetadataTag $  Tag "tagKeyFoo" "bar"
                                              ]
                                  }
-sampleTodoWithUrl = Incomplete TodoItem { tDescription=T.strip $ T.pack sampleTodoWithUrlRaw
+sampleTodoWithUrl = Incomplete TodoItem { tDescription=T.unpack $ T.strip $ T.pack sampleTodoWithUrlRaw
                                  , tPriority=Nothing
                                  , tCreatedAt=Nothing
-                                 , tDueAt=Nothing
+                                 , tDoneAt=Nothing
                                  , tMetadata=[]
                                  }

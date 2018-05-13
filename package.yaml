@@ -22,12 +22,15 @@ description:         Please see the README on Github at <https://github.com/deni
 dependencies:
 - base >= 4.7 && < 5
 - text
+- directory
+- filepath
 - yaml
 - aeson
 - time
 - unordered-containers
 - parsec
 - pretty-simple
+- optparse-applicative
 
 library:
   source-dirs: src
