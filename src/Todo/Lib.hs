@@ -6,6 +6,7 @@ module Todo.Lib where
 import           Control.Monad      (when)
 import qualified Data.ByteString    as BS
 import           Data.List          (sort)
+import qualified Data.List.Index    as LX
 import           Data.Monoid        ((<>))
 import qualified Data.Text          as T
 import qualified Data.Text.IO       as TIO
@@ -43,10 +44,12 @@ entrypoint (TodoOpts configPath debug cmd) = do
   let t = todoFile c
   let d = todoDir c </> "done.txt"
   case cmd of
-    ListTodos filter   -> listTodos t filter
-    AddTodo l          -> addTodo t l
-    CompleteTodo lines -> completeTodo t d lines
-    DeleteTodo lines   -> deleteTodo t lines
+    ListTodos filter     -> listTodos t filter
+    AddTodo l            -> addTodo t l
+    CompleteTodo lines   -> completeTodo t d lines
+    DeleteTodo lines     -> deleteTodo t lines
+    AddPriority line pri -> addPriority t line pri
+    DeletePriority line  -> deletePriority t line
 
 isProject :: String -> Bool
 isProject (x:xs) = case x of
@@ -111,27 +114,78 @@ addTodo p item = do
 
 completeTodo :: FilePath -> FilePath -> [Int] -> IO ()
 completeTodo todoFile doneFile nums = do
-  backupFile todoFile
   now <- getCurrentTime
   let nowDay = utctDay now
   c <- TIO.readFile todoFile
   -- TODO: Add completion date
-  let filtered = T.intercalate "\n" ["x " <> x | (_, x) <- filter (\(l, _) -> l `elem` nums) $ zip [1..] $ T.lines c]
-  TIO.appendFile doneFile (filtered <> "\n")
-  let rest = T.intercalate "\n" [x | (_, x) <- filter (\(l, _) -> not $ l `elem` nums) $ zip [1..] $ T.lines c]
-  TIO.writeFile todoFile (rest <> "\n")
+  let (filtered, rest) = filterTodoLines nums $ T.lines c
+  let filtered' = map (\x -> "x " <> x ) $ filtered
+  appendTodoLines doneFile filtered'
+  writeTodoLines todoFile rest
   putStrLn $ "Completed items:"
-  putStrLn $ T.unpack filtered
+  putStrLn $ T.unpack $ concatTodoLines filtered'
 
 deleteTodo :: FilePath -> [Int] -> IO ()
 deleteTodo todoFile nums = do
-  backupFile todoFile
   c <- TIO.readFile todoFile
-  let filtered = T.intercalate "\n" [x | (_, x) <- filter (\(l, _) -> l `elem` nums) $ zip [1..] $ T.lines c]
-  let rest = T.intercalate "\n" [x | (_, x) <- filter (\(l, _) -> not $ l `elem` nums) $ zip [1..] $ T.lines c]
-  TIO.writeFile todoFile (rest <> "\n")
+  let (filtered, rest) = filterTodoLines nums $ T.lines c
+  writeTodoLines todoFile rest
   putStrLn $ "Removed items:"
-  putStrLn $ T.unpack filtered
+  putStrLn $ T.unpack $ concatTodoLines filtered
+
+addPriority :: FilePath -> Int -> Priority -> IO ()
+addPriority todoFile lineNum pri = do
+  c <- TIO.readFile todoFile
+  let all = T.lines c
+  let item = getTodoLine lineNum all
+  (Incomplete todo) <- parseItemOrDie item
+  let t' = Incomplete $ todo{tPriority=Just pri}
+  writeTodoLines todoFile $ modifyTodoLine lineNum all (show t')
+  putStrLn $ "Prioritized item:"
+  putStrLn $ show t'
+
+deletePriority :: FilePath -> Int -> IO ()
+deletePriority todoFile lineNum = do
+  c <- TIO.readFile todoFile
+  let all = T.lines c
+  let item = getTodoLine lineNum all
+  (Incomplete todo) <- parseItemOrDie item
+  let t' = Incomplete $ todo{tPriority=Nothing}
+  writeTodoLines todoFile $ modifyTodoLine lineNum all (show t')
+  putStrLn $ "Deprioritized item:"
+  putStrLn $ show t'
+
+getTodoLine :: Int -> [T.Text] -> String
+getTodoLine 0 xs   = T.unpack $ xs !! 0
+getTodoLine num xs = T.unpack $ xs !! (num - 1)
+
+modifyTodoLine :: Int -> [T.Text] -> String -> [T.Text]
+modifyTodoLine i xs l = LX.modifyAt (i - 1) (\_ -> T.pack l) xs
+
+concatTodoLines :: [T.Text] -> T.Text
+concatTodoLines xs = (T.intercalate "\n" xs) <> "\n"
+
+writeTodoLines :: FilePath -> [T.Text] -> IO ()
+writeTodoLines t xs = do
+  backupFile t
+  TIO.writeFile t (concatTodoLines xs)
+
+appendTodoLines :: FilePath -> [T.Text] -> IO ()
+appendTodoLines t xs = do
+  backupFile t
+  TIO.appendFile t (concatTodoLines xs)
+
+filterTodoLines :: [Int] -> [T.Text] -> ([T.Text], [T.Text])
+filterTodoLines is xs = (filtered, rest)
+  where filtered = [x | (_, x) <- filter (\(l, _) -> l `elem` is) $ zip [1..] xs]
+        rest = [x | (_, x) <- filter (\(l, _) -> not $ l `elem` is) $ zip [1..] xs]
+
+parseItemOrDie :: String -> IO (Todo)
+parseItemOrDie i = do
+  let todo = parse todoItem "" i
+  case todo of
+    Left err   -> die $ show err
+    Right item -> return item
 
 backupFile :: FilePath -> IO ()
 backupFile p = copyFile p (p <> ".bak")

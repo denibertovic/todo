@@ -16,6 +16,8 @@ data TodoCommand = AddTodo String
                  | ListTodos [String]
                  | CompleteTodo [Int]
                  | DeleteTodo [Int]
+                 | AddPriority Int Priority
+                 | DeletePriority Int
                  deriving (Eq, Show)
 
 data TodoOpts = TodoOpts {
@@ -39,7 +41,13 @@ configPathOpt = optional $ strOption
         <> metavar "PATH"
         <> help "absolute path to the config file" )
 
-todoCmds env = subparser (cmdList env <> cmdAdd env <> cmdComplete env <> cmdDelete env)
+todoCmds env = subparser (  cmdList env
+                         <> cmdAdd env
+                         <> cmdComplete env
+                         <> cmdDelete env
+                         <> cmdAddPriority env
+                         <> cmdDeletePriority env
+                         )
 
 cmdList env = command "ls" infos
     where infos = info (options <**> helper) desc
@@ -60,6 +68,16 @@ cmdDelete env = command "rm" infos
     where infos = info (options <**> helper) desc
           desc = progDesc "Deletes one or more todos"
           options = DeleteTodo <$> (some $ argument auto (metavar "LINENUM"))
+
+cmdAddPriority env = command "pri" infos
+    where infos = info (options <**> helper) desc
+          desc = progDesc "Adds/Changes priority for the specified todo"
+          options = AddPriority <$> (argument auto (metavar "LINENUM")) <*> (argument auto (metavar "PRI"))
+
+cmdDeletePriority env = command "depri" infos
+    where infos = info (options <**> helper) desc
+          desc = progDesc "Deletes priority for the specified todo"
+          options = DeletePriority <$> (argument auto (metavar "LINENUM"))
 
 todoOpts :: Env -> Parser TodoOpts
 todoOpts env = TodoOpts <$> configPathOpt <*> debugOpt <*> (todoCmds env)
