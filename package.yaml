@@ -21,6 +21,7 @@ description:         Please see the README on Github at <https://github.com/deni
 
 dependencies:
 - base >= 4.7 && < 5
+- time
 - text
 - directory
 - filepath
@@ -30,15 +31,18 @@ dependencies:
 - unordered-containers
 - parsec
 - pretty-simple
+- bytestring
 - optparse-applicative
+- rainbow
 
 library:
   source-dirs: src
 
 executables:
-  todo-exe:
+  todo:
     main:                Main.hs
     source-dirs:         app
+    other-modules: Paths_todo
     ghc-options:
     - -threaded
     - -rtsopts

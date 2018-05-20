@@ -11,6 +11,7 @@ import           Data.Monoid         ((<>))
 import qualified Data.Text           as T
 import           Data.Time.Calendar  (Day (..))
 import           Data.Time.Clock     (UTCTime)
+import           Text.Parsec         (ParseError)
 
 
 data TodoConfig = TodoConfig { todoDir    :: FilePath
@@ -25,7 +26,6 @@ instance FromJSON TodoConfig where
     reportFile <- o .: "todo_report"
     return $ TodoConfig {..}
   parseJSON _ = fail "Expected Object for Config value"
-
 
 newtype Context = Context String deriving (Eq)
 newtype Project = Project String deriving (Eq)
@@ -66,22 +66,22 @@ instance Show Priority where
   show E = "(" <> "E" <> ")"
   show F = "(" <> "F" <> ")"
 
+instance Ord Priority where
+  compare a b = compare (show a) (show b)
+
 newtype TodoList = TodoList [Todo] deriving (Eq, Show)
 
-data TodoItem  = TodoItem { tDescription :: String
-                          , tPriority    :: Maybe Priority
+data TodoItem  = TodoItem { tPriority    :: Maybe Priority
+                          , tDescription :: String
                           , tMetadata    :: [Metadata]
                           , tCreatedAt   :: Maybe Day
                           , tDoneAt      :: Maybe Day
                           } deriving (Eq)
 
 instance Show TodoItem where
-  show (TodoItem desc pri metadata createdAt doneAt) = (maybe "" show pri)
-                                                     <> space
-                                                     <> (maybe "" show createdAt)
-                                                     <> space
-                                                     <> (maybe "" show doneAt)
-                                                     <> space
+  show (TodoItem pri desc metadata createdAt doneAt) = (maybe "" (flip (<>) space . show) pri)
+                                                     <> (maybe "" (flip (<>) space . show) createdAt)
+                                                     <> (maybe "" (flip (<>) space . show) doneAt)
                                                      <> desc
                                                      <> (show metadata)
 
@@ -93,6 +93,28 @@ data Tag = Tag String String
 
 data Todo = Completed TodoItem | Incomplete TodoItem deriving (Eq)
 
+instance Ord TodoItem where
+  compare (TodoItem Nothing _ _ _ _) (TodoItem Nothing _ _ _ _) = EQ
+  compare (TodoItem (Just _) _ _ _ _) (TodoItem Nothing _ _ _ _) = LT
+  compare (TodoItem Nothing  _ _ _ _) (TodoItem (Just _) _ _ _ _) = GT
+  compare (TodoItem (Just a) _ _ _ _) (TodoItem (Just b) _ _ _ _) =
+    compare a b
+
+instance Ord Todo where
+  compare (Incomplete _) (Completed _) = GT
+  compare (Completed _ ) (Incomplete _) = LT
+  compare (Incomplete t1) (Incomplete t2) =
+    compare t1 t2
+  compare (Completed t1) (Completed t2) = compare t1 t2
+
+instance {-# OVERLAPPING #-} Ord (Int, Either ParseError Todo) where
+  compare (_, Right _) (_, Left _)    = LT
+  compare (_, Left _) (_, Right _)    = GT
+  compare (_, Left _) (_, Left _)     = EQ
+  compare (_, Right t1) (_, Right t2) = compare t1 t2
+
+instance Ord ParseError where
+  compare _ _ = EQ
 
 instance Show Todo where
   show (Completed i)  = "x" <> space <> (show i)

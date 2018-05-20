@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+
 module Test.Parser.ParserSpec where
 
 import           Todo.Parser
@@ -38,28 +39,28 @@ spec =
     describe "Project" $ do
 
       it "Matches project +someProject1 as Project someProject1" $
-        parse project "" "+someProject1 " `shouldBe` Right (MetadataProject $ Project "someProject1")
+        parse project "" "+someProject1" `shouldBe` Right (MetadataProject $ Project "someProject1")
 
       it "Doesn't match project foo+someProject1 as Project someProject1" $
-        parse project "" "foo+someProject1 " `shouldNotBe` Right (MetadataProject $ Project "someProject1")
+        parse project "" "foo+someProject1" `shouldNotBe` Right (MetadataProject $ Project "someProject1")
 
     describe "Context" $ do
 
       it "Matches context @someContext1 as Context someContext1" $
-        parse context "" "@someContext1 " `shouldBe` Right (MetadataContext $ Context "someContext1")
+        parse context "" "@someContext1" `shouldBe` Right (MetadataContext $ Context "someContext1")
 
       it "Doesn't match context foo@someContext1 as Context someContext1" $
-        parse context "" "foo+someContext1 " `shouldNotBe` Right (MetadataContext $ Context "someContext1")
+        parse context "" "foo+someContext1" `shouldNotBe` Right (MetadataContext $ Context "someContext1")
 
     describe "Tag" $ do
 
       it "Matches tag key:value as (key, value)" $
-        parse tag "" "key:value " `shouldBe` Right (MetadataTag $ Tag "key" "value")
+        parse tag "" "key:value" `shouldBe` Right (MetadataTag $ Tag "key" "value")
 
     describe "Description/Word" $ do
 
       it "Matches word foo as foo" $
-        parse word "" "foo " `shouldBe` Right (MetadataString "foo")
+        parse word "" "foo" `shouldBe` Right (MetadataString "foo")
 
     describe "Todo Item" $ do
 
@@ -73,7 +74,7 @@ spec =
         parse incompleteTask "" sampleTodoWithPriRaw `shouldBe` Right sampleTodoPriA
 
       it "Matches 2 TodoItems" $
-        parse (between sc eof (many incompleteTask)) "" (sampleTodoWithPriRaw <> sampleTodoRaw) `shouldBe` Right [sampleTodoPriA, sampleTodo]
+        parse (between sc eof (many incompleteTask)) "" (sampleTodoWithPriRaw <> "\n" <> sampleTodoRaw) `shouldBe` Right [sampleTodoPriA, sampleTodo]
 
       it "Matches TodoItem with Tags at the end" $
         parse incompleteTask "" sampleTodoWithPriWithTagsRaw `shouldBe` Right sampleTodoPriAWithTags
@@ -83,9 +84,9 @@ spec =
 
 
 
-sampleTodoRaw = "+project @context foo bar @context2 +project2\n"
-sampleTodoWithPriRaw = "(A) +project @context foo bar @context2 +project2\n"
-sampleTodoWithPriWithTagsRaw = "(A) +project @context foo bar @context2 +project2 tagKeyFoo:bar\n"
+sampleTodoRaw = "+project @context foo bar @context2 +project2"
+sampleTodoWithPriRaw = "(A) +project @context foo bar @context2 +project2"
+sampleTodoWithPriWithTagsRaw = "(A) +project @context foo bar @context2 +project2 tagKeyFoo:bar"
 sampleTodoWithUrlRaw = "This is a url: https://example.com/foo\n"
 
 

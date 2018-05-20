@@ -7,6 +7,7 @@ import           Control.Monad       (join, void)
 import           Data.Bool           (not)
 import qualified Data.HashMap.Strict as HM
 import           Data.List           (nub)
+import           Data.List           (intercalate)
 import           Data.Monoid         ((<>))
 import           Data.Text           (Text)
 import qualified Data.Text           as T
@@ -63,7 +64,7 @@ context = try $ do
   _ <- char '@'
   -- ctx <- manyTill alphaNum (space <|> endOfLine)
   ctx <- many1 (noneOf " \n\r\t")
-  _ <- sc
+  _ <- sc <|> eof
   return $ MetadataContext $ Context ctx
 
 project :: Parser Metadata
@@ -71,7 +72,7 @@ project = try $ do
   _ <- char '+'
   -- p <- manyTill alphaNum (space <|> endOfLine)
   p <- many1 (noneOf " \n\r\t")
-  _ <- sc
+  _ <- sc <|> eof
   return $ MetadataProject $ Project p
 
 kv :: Parser Metadata
@@ -79,7 +80,7 @@ kv = try $ do
   key <- tagKey
   _ <- char ':'
   value <- tagValue
-  _ <- sc
+  _ <- sc <|> eof
   return $ MetadataTag $ Tag key value
 
 tagKey :: Parser String
@@ -92,14 +93,14 @@ duedate :: Parser Metadata
 duedate = try $ do
   _ <- string "due:"
   d <- date
-  _ <- sc
+  _ <- sc <|> eof
   return $ MetadataTag $ TagDueDate d
 
 origin :: Parser Metadata
 origin = try $ do
   _ <- string "origin:"
   (MetadataLink l) <- link
-  _ <- sc
+  _ <- sc <|> eof
   return $ MetadataTag $ TagOrigin l
 
 tag :: Parser Metadata
@@ -112,14 +113,14 @@ link :: Parser Metadata
 link = try $ do
   proto <- string "https:" <|> string "http:"
   rest <- many1 $ noneOf " \n\r\t"
-  _ <- sc
+  _ <- sc <|> eof
   return $ MetadataLink $ Link $ proto <> rest
 
 word :: Parser Metadata
 word = do
   -- word <- manyTill (noneOf " \t\n\r") (space <|> endOfLine)
   word <- many1 $ noneOf " \t\n\r"
-  _ <- sc
+  _ <- sc <|> eof
   return $ MetadataString word
 
 metadata :: Parser Metadata
@@ -127,6 +128,10 @@ metadata =
   -- tags need to be at the end of the line as per the spec so they'll get
   -- tried last
   choice [ project, context, link, tag, word ]
+
+pleaseNoMore :: Parser ()
+pleaseNoMore = void (endOfLine) <|> eof
+
 
 incompleteTask :: Parser Todo
 incompleteTask = do
@@ -137,17 +142,17 @@ incompleteTask = do
     endDate <- optionMaybe date
     _ <- sc
     m <- many1 metadata
-    _ <- endOfLine
+    _ <- pleaseNoMore
     let m' = filter (isMetadataStringOrLink) m
-    let desc = [ packIt x | x <- m']
+    let desc = [ getIt x | x <- m']
     let m'' = filter (not . isMetadataStringOrLink) m
-    return $ Incomplete TodoItem { tDescription=T.unpack $ T.intercalate " " desc
+    return $ Incomplete TodoItem { tDescription=intercalate " " desc
                                  , tPriority=pri
                                  , tCreatedAt=startDate
                                  , tDoneAt=endDate
                                  , tMetadata=m''}
-  where packIt (MetadataString s)      = T.pack s
-        packIt (MetadataLink (Link s)) = T.pack s
+  where getIt (MetadataString s)      = s
+        getIt (MetadataLink (Link s)) = s
 
 isMetadataString :: Metadata -> Bool
 isMetadataString m = case m of
@@ -171,18 +176,12 @@ completedTask = do
   (Incomplete item) <- incompleteTask
   return $ Completed item
 
-item :: Parser Todo
-item = choice [ completedTask, incompleteTask ]
+todoItem :: Parser Todo
+todoItem = choice [ completedTask, incompleteTask ]
 
 todoParser :: Parser [Todo]
-todoParser = between sc eof (many item)
+todoParser = between sc eof (many todoItem)
 
-dinamo :: IO ()
-dinamo = do
-  let path = "/tmp/todo.txt"
-  c <- TIO.readFile path
-  let r  = parse todoParser "/tmp/todo.txt" (T.unpack c) :: Either ParseError [Todo]
-  pPrint r
-  case r of
-    Right r' -> pPrint $ length r'
-    Left err -> pPrint err
+validateLine :: String -> Either ParseError Todo
+validateLine content = parse todoItem "" content
+
