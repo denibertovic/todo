@@ -37,7 +37,9 @@ resolver: lts-11.5
 # will not be run. This is useful for tweaking upstream packages.
 packages:
 - .
-- location: /home/deni/projects/forge
+- location:
+    git: git@github.com:denibertovic/forge.git
+    commit: 959cb3bb923abb9f56b5f0d22721a6e5a732ab53
   extra-dep: true
 #
 # Dependency packages to be pulled from upstream that are not in the resolver
