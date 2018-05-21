@@ -4,8 +4,10 @@
 module Todo.Lib where
 
 import           Control.Monad      (when)
+import           Control.Monad      (forM)
 import qualified Data.ByteString    as BS
-import           Data.List          (sort)
+import           Data.Either        (isRight)
+import           Data.List          (nubBy, sort)
 import qualified Data.List.Index    as LX
 import           Data.Monoid        ((<>))
 import qualified Data.Text          as T
@@ -19,6 +21,13 @@ import           System.Exit        (die)
 import           System.FilePath    ((</>))
 import           Text.Parsec        (ParseError, parse)
 import           Text.Pretty.Simple (pPrint)
+
+import qualified Forge.Github.Lib   as Github
+import           Forge.Github.Types (GithubConfig (..), GithubIssueDetails (..))
+import qualified Forge.Gitlab.Lib   as Gitlab
+import           Forge.Gitlab.Types (GitlabConfig (..), GitlabTodoDetails (..))
+import qualified Forge.Types        as ForgeTypes
+import qualified Forge.Utils        as ForgeUtils
 
 import           Todo.Options
 import           Todo.Parser
@@ -50,6 +59,7 @@ entrypoint (TodoOpts configPath debug cmd) = do
     DeleteTodo lines     -> deleteTodo t lines
     AddPriority line pri -> addPriority t line pri
     DeletePriority line  -> deletePriority t line
+    PullOrigins          -> pullOrigins c
 
 isProject :: String -> Bool
 isProject (x:xs) = case x of
@@ -157,6 +167,75 @@ deletePriority todoFile lineNum = do
   writeTodoLines todoFile $ modifyTodoLine lineNum all (show t')
   putStrLn $ "Deprioritized item:"
   putStrLn $ show t'
+
+pullOrigins :: TodoConfig -> IO ()
+pullOrigins c = do
+  let f = todoFile c
+  let os = origins c
+  let githubOrigins = github os
+  let gitlabOrigins = gitlab os
+  ghs <- fetchGithubIssues githubOrigins
+  gls <- fetchGitlabIssues gitlabOrigins
+  c <- TIO.readFile f
+  let todos = parse todoParser f $ T.unpack c
+  case todos of
+    Left err -> die $ show err
+    Right ts -> do
+      let ghtodos = map mkTodoFromGithubIssue ghs
+      let gltodos = map mkTodoFromGitlabTodo gls
+      let newTodos = nubBy compareByOrigin $ ts ++ ghtodos ++ gltodos
+      backupFile f
+      writeFile f (show newTodos)
+
+compareByOrigin :: Todo -> Todo -> Bool
+compareByOrigin (Incomplete t1) (Incomplete t2) = (tDescription t1) == (tDescription t2) && (tMetadata t1) == (tMetadata t2)
+compareByOrigin (Completed _) (Completed _) = False
+
+mkTodoFromGithubIssue :: GithubIssueDetails -> Todo
+mkTodoFromGithubIssue g = Incomplete $ TodoItem { tPriority=Nothing
+                                                , tDescription=githubIssueTitle g
+                                                , tMetadata=[ MetadataProject $ Project $ githubIssueProject g
+                                                            , MetadataContext $ Context $ githubIssueGroup g
+                                                            , MetadataTag $ TagOrigin $ url2link $ githubIssueUrl g
+                                                            ]
+                                                , tCreatedAt=Nothing
+                                                , tDoneAt=Nothing
+                                                }
+  where url2link (ForgeTypes.Url s) = Link s
+
+mkTodoFromGitlabTodo :: GitlabTodoDetails -> Todo
+mkTodoFromGitlabTodo g = Incomplete $ TodoItem { tPriority=Nothing
+                                               , tDescription=gitlabTodoTitle g
+                                               , tMetadata=[ MetadataProject $ Project $ gitlabTodoProject g
+                                                           , MetadataContext $ Context $ gitlabTodoGroup g
+                                                           , MetadataTag $ TagOrigin $ url2link $ gitlabTodoUrl g
+                                                           ]
+                                               , tCreatedAt=Nothing
+                                               , tDoneAt=Nothing
+                                               }
+  where url2link (ForgeTypes.Url s) = Link s
+
+fetchGithubIssues :: [FilePath] -> IO ([GithubIssueDetails])
+fetchGithubIssues cs = do
+  xss <- forM cs $ \c -> do
+    c' <- ForgeUtils.readConfig c
+    let token = githubAccessToken c'
+    res <- Github.listIssues' token
+    case res of
+      Left err -> die $ show err
+      Right xs -> return xs
+  return $ concat xss
+
+fetchGitlabIssues :: [FilePath] -> IO ([GitlabTodoDetails])
+fetchGitlabIssues cs = do
+  xss <- forM cs $ \c -> do
+    c' <- ForgeUtils.readConfig c
+    let token = gitlabAccessToken c'
+    res <- Gitlab.listTodos' token
+    case res of
+      Left err -> die $ show err
+      Right xs -> return xs
+  return $ concat xss
 
 getTodoLine :: Int -> [T.Text] -> String
 getTodoLine 0 xs   = T.unpack $ xs !! 0

@@ -18,6 +18,7 @@ data TodoCommand = AddTodo String
                  | DeleteTodo [Int]
                  | AddPriority Int Priority
                  | DeletePriority Int
+                 | PullOrigins
                  deriving (Eq, Show)
 
 data TodoOpts = TodoOpts {
@@ -47,12 +48,18 @@ todoCmds env = subparser (  cmdList env
                          <> cmdDelete env
                          <> cmdAddPriority env
                          <> cmdDeletePriority env
+                         <> cmdPullOrigins env
                          )
 
 cmdList env = command "ls" infos
     where infos = info (options <**> helper) desc
           desc = progDesc "List todos"
           options = ListTodos <$> (many $ argument str (metavar "+project/@context"))
+
+cmdPullOrigins env = command "pull" infos
+    where infos = info (options <**> helper) desc
+          desc = progDesc "Pull (and merge) issues from configured origins"
+          options = pure PullOrigins
 
 cmdAdd env = command "add" infos
     where infos = info (options <**> helper) desc

@@ -14,9 +14,22 @@ import           Data.Time.Clock     (UTCTime)
 import           Text.Parsec         (ParseError)
 
 
+data TodoConfigOrigin = TodoConfigOrigin { github :: [FilePath]
+                                         , gitlab :: [FilePath]
+                                         } deriving (Eq, Show)
+
+instance FromJSON TodoConfigOrigin where
+  parseJSON (Object o) = do
+    githubConfigs  <- o .: "github"
+    gitlabConfigs  <- o .: "gitlab"
+    return $ TodoConfigOrigin {github=githubConfigs, gitlab=gitlabConfigs}
+  parseJSON _ = fail "Expected Object for Origin value"
+
+
 data TodoConfig = TodoConfig { todoDir    :: FilePath
                              , todoFile   :: FilePath
                              , reportFile :: FilePath
+                             , origins    :: TodoConfigOrigin
                              } deriving (Eq, Show)
 
 instance FromJSON TodoConfig where
@@ -24,6 +37,7 @@ instance FromJSON TodoConfig where
     todoDir <- o .: "todo_dir"
     todoFile <- o .: "todo_file"
     reportFile <- o .: "todo_report"
+    origins <- (o .: "origins") >>= parseJSON
     return $ TodoConfig {..}
   parseJSON _ = fail "Expected Object for Config value"
 
