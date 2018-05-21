@@ -135,7 +135,7 @@ instance Show Todo where
   show (Incomplete i) = show i
 
 instance {-# OVERLAPPING #-} Show [Todo] where
-  show xs = concat $ map show xs
+  show xs = T.unpack $ (T.intercalate "\n" $ (map (T.pack . show)  xs)) <> "\n"
 
 instance Show Tag where
   show (Tag key value)  = key <> ":" <> value
