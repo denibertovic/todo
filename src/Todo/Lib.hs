@@ -100,7 +100,10 @@ hasProjAndCtx [] [] (_, (Right (Incomplete x))) = True
 hasProjAndCtx [] cs (_, (Right (Incomplete x))) = or (map (flip elem cs) $ tMetadata x)
 hasProjAndCtx ps [] (_, (Right (Incomplete x))) = or (map (flip elem ps) $ tMetadata x)
 hasProjAndCtx (p:ps) (c:cs) (_, (Right (Incomplete x))) = or (map (flip elem (p:ps)) $ tMetadata x) && or (map (flip elem (c:cs)) $ tMetadata x)
-hasProjAndCtx _ _ (_, (Right (Completed x))) = False
+hasProjAndCtx [] [] (_, (Right (Completed x))) = True
+hasProjAndCtx [] cs (_, (Right (Completed x))) = or (map (flip elem cs) $ tMetadata x)
+hasProjAndCtx ps [] (_, (Right (Completed x))) = or (map (flip elem ps) $ tMetadata x)
+hasProjAndCtx (p:ps) (c:cs) (_, (Right (Completed x))) = or (map (flip elem (p:ps)) $ tMetadata x) && or (map (flip elem (c:cs)) $ tMetadata x)
 hasProjAndCtx _ _ (_, (Left _)) = True
 
 addTodo :: FilePath -> String -> IO ()

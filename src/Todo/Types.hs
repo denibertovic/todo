@@ -121,7 +121,7 @@ instance Show Todo where
   show (Incomplete i) = show i
 
 instance {-# OVERLAPPING #-} Show [Todo] where
-  show xs = concat $ map ((<>) "\n") $ map show xs
+  show xs = concat $ map show xs
 
 instance Show Tag where
   show (Tag key value)  = key <> ":" <> value
