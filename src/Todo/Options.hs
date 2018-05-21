@@ -24,6 +24,7 @@ data TodoCommand = AddTodo String
 data TodoOpts = TodoOpts {
                    configFilePath :: Maybe FilePath
                  , debug          :: Bool
+                 , verbose        :: Bool
                  , cmd            :: TodoCommand
                  }
 
@@ -33,8 +34,12 @@ debugOpt = switch
 
 versionOpt = infoOption (showVersion version) (
                long "version"
-               <> short 'v'
                <> help "Show version.")
+
+verboseOpt = switch (
+               long "verbose"
+               <> short 'v'
+               <> help "Verbose output")
 
 configPathOpt = optional $ strOption
         ( long "config"
@@ -87,4 +92,4 @@ cmdDeletePriority env = command "depri" infos
           options = DeletePriority <$> (argument auto (metavar "LINENUM"))
 
 todoOpts :: Env -> Parser TodoOpts
-todoOpts env = TodoOpts <$> configPathOpt <*> debugOpt <*> (todoCmds env)
+todoOpts env = TodoOpts <$> configPathOpt <*> debugOpt <*> verboseOpt <*> (todoCmds env)

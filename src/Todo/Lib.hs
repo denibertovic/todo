@@ -46,14 +46,14 @@ readConfig p = do
     Right c  -> return c
 
 entrypoint :: TodoOpts -> IO ()
-entrypoint (TodoOpts configPath debug cmd) = do
+entrypoint (TodoOpts configPath debug verbose cmd) = do
   h <- getHomeDirectory
   let defaultConfig = h </> ".todo.yaml"
   c <- readConfig $ maybe defaultConfig id configPath
   let t = todoFile c
   let d = todoDir c </> "done.txt"
   case cmd of
-    ListTodos filter     -> listTodos t filter
+    ListTodos filter     -> listTodos t filter verbose
     AddTodo l            -> addTodo t l
     CompleteTodo lines   -> completeTodo t d lines
     DeleteTodo lines     -> deleteTodo t lines
@@ -81,18 +81,29 @@ mkContext (x:xs) = case x of
   '@' -> MetadataContext $ Context xs
   _   -> MetadataContext $ Context (x:xs)
 
-listTodos :: FilePath -> [String] -> IO ()
-listTodos p filters = do
+listTodos :: FilePath -> [String] -> Bool -> IO ()
+listTodos p filters verbose = do
   let projects = [mkProject x | x <- filters, isProject x]
   let contexts = [mkContext x | x <- filters, isContext x]
   c <- TIO.readFile p
   let todos =  sort $ filter (hasProjAndCtx projects contexts) $ zip [1..] $ map (parse todoItem p) $ map T.unpack $ T.lines c
-  mapM_ printItem todos
+  case verbose of
+    False -> mapM_ (printItem . hideVerboseItems) todos
+    True  -> mapM_ printItem todos
 
 printItem :: (Int, Either ParseError Todo) -> IO ()
 printItem (lineNum, item) = case item of
   Left err -> colorPrintChunks $ [chunk (show lineNum) & fore green, chunk " ", chunk $ show err, chunk "\n"]
   Right i  -> colorPrintChunks $ [chunk (show lineNum) & fore green, chunk " ", chunkize i, chunk "\n"]
+
+hideVerboseItems :: (Int, Either ParseError Todo) -> (Int, Either ParseError Todo)
+hideVerboseItems (i, Left x) = (i, Left x)
+hideVerboseItems (i, Right (Incomplete x)) = (i, Right (Incomplete $ x{tMetadata=map hideOrigin $ tMetadata x}))
+hideVerboseItems (i, Right (Completed x)) = (i, Right (Completed $ x{tMetadata=map hideOrigin $ tMetadata x}))
+
+hideOrigin :: Metadata -> Metadata
+hideOrigin (MetadataTag (TagOrigin (Link l))) = MetadataTag $ TagOrigin $ Link "hidden"
+hideOrigin x = x
 
 chunkize :: Todo -> Chunk String
 chunkize (Completed i) = chunk (show i) & fore grey
