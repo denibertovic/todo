@@ -101,8 +101,8 @@ instance Ord TodoItem where
     compare a b
 
 instance Ord Todo where
-  compare (Incomplete _) (Completed _) = GT
-  compare (Completed _ ) (Incomplete _) = LT
+  compare (Incomplete _) (Completed _) = LT
+  compare (Completed _ ) (Incomplete _) = GT
   compare (Incomplete t1) (Incomplete t2) =
     compare t1 t2
   compare (Completed t1) (Completed t2) = compare t1 t2
