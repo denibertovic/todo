@@ -39,7 +39,7 @@ packages:
 - .
 - location:
     git: git@github.com:denibertovic/forge.git
-    commit: 959cb3bb923abb9f56b5f0d22721a6e5a732ab53
+    commit: 66042a7ccb5e01f3e5afe35d000b4b96437795d3
   extra-dep: true
 #
 # Dependency packages to be pulled from upstream that are not in the resolver
