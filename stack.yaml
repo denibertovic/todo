@@ -38,7 +38,7 @@ resolver: lts-11.5
 packages:
 - .
 - location:
-    git: git@github.com:denibertovic/forge.git
+    git: https://github.com/denibertovic/forge.git
     commit: a40684fcc403840feeb4cc25b26db30900a46b76
   extra-dep: true
 #
