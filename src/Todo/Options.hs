@@ -1,24 +1,26 @@
 module Todo.Options where
 
+import           RIO
+
 import           Control.Monad       (join)
 import           Data.Maybe          (fromJust)
 import           Data.Semigroup      ((<>))
+import qualified Data.Text           as T
 import           Data.Version        (showVersion)
 import           Options.Applicative
 import           Paths_todo          (version)
-
 
 import           Todo.Types
 
 type Env = [(String, String)]
 
-data TodoCommand = AddTodo String
-                 | ListTodos [String]
+data TodoCommand = AddTodo T.Text
+                 | ListTodos [T.Text]
                  | CompleteTodo [Int]
                  | DeleteTodo [Int]
                  | AddPriority Int Priority
                  | DeletePriority Int
-                 | PullOrigins
+                 | PullRemotes [T.Text]
                  deriving (Eq, Show)
 
 data TodoOpts = TodoOpts {
@@ -53,7 +55,7 @@ todoCmds env = subparser (  cmdList env
                          <> cmdDelete env
                          <> cmdAddPriority env
                          <> cmdDeletePriority env
-                         <> cmdPullOrigins env
+                         <> cmdPullRemotes env
                          )
 
 cmdList env = command "ls" infos
@@ -61,10 +63,10 @@ cmdList env = command "ls" infos
           desc = progDesc "List todos"
           options = ListTodos <$> (many $ argument str (metavar "+project/@context"))
 
-cmdPullOrigins env = command "pull" infos
+cmdPullRemotes env = command "pull" infos
     where infos = info (options <**> helper) desc
-          desc = progDesc "Pull (and merge) issues from configured origins"
-          options = pure PullOrigins
+          desc = progDesc "Pull (and merge) issues from configured remote"
+          options = PullRemotes <$> (many $ argument str (metavar "REMOTE"))
 
 cmdAdd env = command "add" infos
     where infos = info (options <**> helper) desc

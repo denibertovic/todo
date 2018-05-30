@@ -2,7 +2,8 @@
 
 module Main where
 
-import           Data.Monoid         ((<>))
+import           RIO
+
 import           Options.Applicative
 import           System.Environment  (getEnvironment)
 
@@ -18,4 +19,3 @@ main = do
       ( fullDesc
      <> progDesc "Todo.txt CLI tool"
      <> header "todo - A CLI tool for working with todo.txt" )
-

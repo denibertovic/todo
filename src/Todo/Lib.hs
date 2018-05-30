@@ -3,19 +3,21 @@
 
 module Todo.Lib where
 
+import           Prelude            (print, putStrLn, (!!))
+import           RIO
+
 import           Control.Monad      (when)
 import           Control.Monad      (forM)
 import qualified Data.ByteString    as BS
 import           Data.Either        (isRight)
 import           Data.List          (nubBy, sort)
 import qualified Data.List.Index    as LX
-import           Data.Monoid        ((<>))
 import qualified Data.Text          as T
 import qualified Data.Text.IO       as TIO
 import           Data.Time.Clock    (UTCTime (..), getCurrentTime)
 import           Data.Yaml          (decodeFileEither)
 import qualified Data.Yaml          as Y
-import           Rainbow
+import           Rainbow            hiding ((<>))
 import           System.Directory   (copyFile, doesFileExist, getHomeDirectory)
 import           System.Exit        (die)
 import           System.FilePath    ((</>))
@@ -52,14 +54,17 @@ entrypoint (TodoOpts configPath debug verbose cmd) = do
   c <- readConfig $ maybe defaultConfig id configPath
   let t = todoFile c
   let d = todoDir c </> "done.txt"
-  case cmd of
-    ListTodos filter     -> listTodos t filter verbose
-    AddTodo l            -> addTodo t l
-    CompleteTodo lines   -> completeTodo t d lines
-    DeleteTodo lines     -> deleteTodo t lines
-    AddPriority line pri -> addPriority t line pri
-    DeletePriority line  -> deletePriority t line
-    PullOrigins          -> pullOrigins c
+  lo <- logOptionsHandle stderr debug
+  withLogFunc lo $ \l -> do
+    let app = App { appConfig=c, appLogger=l }
+    case cmd of
+      ListTodos filter     -> runRIO app $ listTodos filter verbose
+      AddTodo l            -> runRIO app $ addTodo l
+      CompleteTodo lines   -> runRIO app $ completeTodo lines
+      DeleteTodo lines     -> runRIO app $ deleteTodo lines
+      AddPriority line pri -> runRIO app $ addPriority line pri
+      DeletePriority line  -> runRIO app $ deletePriority line
+      PullRemotes rs       -> runRIO app $ pullRemotes rs
 
 isProject :: String -> Bool
 isProject (x:xs) = case x of
@@ -73,39 +78,39 @@ isContext (x:xs) = case x of
 
 mkProject :: String -> Metadata
 mkProject (x:xs) = case x of
-  '+' -> MetadataProject $ Project xs
-  _   -> MetadataProject $ Project (x:xs)
+  '+' -> MetadataProject $ Project $ T.pack xs
+  _   -> MetadataProject $ Project $ T.pack (x:xs)
 
 mkContext :: String -> Metadata
 mkContext (x:xs) = case x of
-  '@' -> MetadataContext $ Context xs
-  _   -> MetadataContext $ Context (x:xs)
+  '@' -> MetadataContext $ Context $ T.pack xs
+  _   -> MetadataContext $ Context $ T.pack (x:xs)
 
-listTodos :: FilePath -> [String] -> Bool -> IO ()
-listTodos p filters verbose = do
-  let projects = [mkProject x | x <- filters, isProject x]
-  let contexts = [mkContext x | x <- filters, isContext x]
-  c <- TIO.readFile p
-  let todos =  sort $ filter (hasProjAndCtx projects contexts) $ zip [1..] $ map (parse todoItem p) $ map T.unpack $ T.lines c
+listTodos :: (HasLogFunc env, HasConfig env) => [T.Text] -> Bool -> RIO env ()
+listTodos filters verbose = do
+  env <- ask
+  let p = todoFile $ env ^. configL
+  let projects = [mkProject $ T.unpack x | x <- filters, isProject $ T.unpack x]
+  let contexts = [mkContext $ T.unpack x | x <- filters, isContext $ T.unpack x]
+  c <- liftIO $ TIO.readFile p
+  ts <- liftIO $ parseOrDie p c
+  let todos =  sort $ filter (hasProjAndCtx projects contexts) $ zip [1..] ts
   case verbose of
-    False -> mapM_ (printItem . hideVerboseItems) todos
-    True  -> mapM_ printItem todos
+    False -> liftIO $ mapM_ (printItem . hideVerboseItems) todos
+    True  -> liftIO $ mapM_ printItem todos
 
-printItem :: (Int, Either ParseError Todo) -> IO ()
-printItem (lineNum, item) = case item of
-  Left err -> colorPrintChunks $ [chunk (show lineNum) & fore green, chunk " ", chunk $ show err, chunk "\n"]
-  Right i  -> colorPrintChunks $ [chunk (show lineNum) & fore green, chunk " ", chunkize i, chunk "\n"]
+printItem :: (Int, Todo TodoItem) -> IO ()
+printItem (lineNum, item) = colorPrintChunks $ [chunk (show lineNum) & fore green, chunk " ", chunkize item, chunk "\n"]
 
-hideVerboseItems :: (Int, Either ParseError Todo) -> (Int, Either ParseError Todo)
-hideVerboseItems (i, Left x) = (i, Left x)
-hideVerboseItems (i, Right (Incomplete x)) = (i, Right (Incomplete $ x{tMetadata=map hideOrigin $ tMetadata x}))
-hideVerboseItems (i, Right (Completed x)) = (i, Right (Completed $ x{tMetadata=map hideOrigin $ tMetadata x}))
+hideVerboseItems :: (Int, Todo TodoItem) -> (Int, Todo TodoItem)
+hideVerboseItems (i, Incomplete x) = (i, Incomplete $ x{tMetadata=map hideOrigin $ tMetadata x})
+hideVerboseItems (i, Completed x) = (i, Completed $ x{tMetadata=map hideOrigin $ tMetadata x})
 
 hideOrigin :: Metadata -> Metadata
 hideOrigin (MetadataTag (TagOrigin (Link l))) = MetadataTag $ TagOrigin $ Link "hidden"
 hideOrigin x = x
 
-chunkize :: Todo -> Chunk String
+chunkize :: Todo TodoItem -> Chunk String
 chunkize (Completed i) = chunk (show i) & fore grey
 chunkize (Incomplete i) = case (tPriority i) of
   Just A  -> chunk (show i) & fore red
@@ -116,94 +121,102 @@ chunkize (Incomplete i) = case (tPriority i) of
 
 colorPrintChunks = mapM_ BS.putStr . chunksToByteStrings toByteStringsColors256
 
-hasProjAndCtx :: [Metadata] -> [Metadata] -> (Int, Either ParseError Todo) -> Bool
-hasProjAndCtx [] [] (_, (Right (Incomplete x))) = True
-hasProjAndCtx [] cs (_, (Right (Incomplete x))) = or (map (flip elem cs) $ tMetadata x)
-hasProjAndCtx ps [] (_, (Right (Incomplete x))) = or (map (flip elem ps) $ tMetadata x)
-hasProjAndCtx (p:ps) (c:cs) (_, (Right (Incomplete x))) = or (map (flip elem (p:ps)) $ tMetadata x) && or (map (flip elem (c:cs)) $ tMetadata x)
-hasProjAndCtx [] [] (_, (Right (Completed x))) = True
-hasProjAndCtx [] cs (_, (Right (Completed x))) = or (map (flip elem cs) $ tMetadata x)
-hasProjAndCtx ps [] (_, (Right (Completed x))) = or (map (flip elem ps) $ tMetadata x)
-hasProjAndCtx (p:ps) (c:cs) (_, (Right (Completed x))) = or (map (flip elem (p:ps)) $ tMetadata x) && or (map (flip elem (c:cs)) $ tMetadata x)
-hasProjAndCtx _ _ (_, (Left _)) = True
+hasProjAndCtx :: [Metadata] -> [Metadata] -> (Int, Todo TodoItem) -> Bool
+hasProjAndCtx [] [] (_, Incomplete x) = True
+hasProjAndCtx [] cs (_, Incomplete x) = or (map (flip elem cs) $ tMetadata x)
+hasProjAndCtx ps [] (_, Incomplete x) = or (map (flip elem ps) $ tMetadata x)
+hasProjAndCtx (p:ps) (c:cs) (_, Incomplete x) = or (map (flip elem (p:ps)) $ tMetadata x) && or (map (flip elem (c:cs)) $ tMetadata x)
+hasProjAndCtx [] [] (_, Completed x) = True
+hasProjAndCtx [] cs (_, Completed x) = or (map (flip elem cs) $ tMetadata x)
+hasProjAndCtx ps [] (_, Completed x) = or (map (flip elem ps) $ tMetadata x)
+hasProjAndCtx (p:ps) (c:cs) (_, Completed x) = or (map (flip elem (p:ps)) $ tMetadata x) && or (map (flip elem (c:cs)) $ tMetadata x)
 
-addTodo :: FilePath -> String -> IO ()
-addTodo p item = do
+addTodo :: (HasLogFunc env, HasConfig env) => T.Text -> RIO env ()
+addTodo item = do
+  env <- ask
+  let p = todoFile $ env ^. configL
   let r = validateLine item
   case r of
     Right r' -> do
-      backupFile p
-      TIO.appendFile p $ T.pack (item <> "\n")
-    Left err -> die $ show err
+      liftIO $ backupFile p
+      liftIO $ TIO.appendFile p $ item <> "\n"
+    Left err -> liftIO $ die $ show err
 
-completeTodo :: FilePath -> FilePath -> [Int] -> IO ()
-completeTodo todoFile doneFile nums = do
-  now <- getCurrentTime
+completeTodo :: (HasLogFunc env, HasConfig env) => [Int] -> RIO env ()
+completeTodo nums = do
+  env <- ask
+  let t = todoFile $ env ^. configL
+  let d = todoDoneFile $ env ^. configL
+  now <- liftIO $ getCurrentTime
   let nowDay = utctDay now
-  c <- TIO.readFile todoFile
+  c <- liftIO $ TIO.readFile t
   -- TODO: Add completion date
   let (filtered, rest) = filterTodoLines nums $ T.lines c
   let filtered' = map (\x -> "x " <> x ) $ filtered
-  appendTodoLines doneFile filtered'
-  writeTodoLines todoFile rest
-  putStrLn $ "Completed items:"
-  putStrLn $ T.unpack $ concatTodoLines filtered'
+  liftIO $ appendTodoLines d filtered'
+  liftIO $ writeTodoLines t rest
+  liftIO $ putStrLn $ "Completed items:"
+  liftIO $ putStrLn $ T.unpack $ concatTodoLines filtered'
 
-deleteTodo :: FilePath -> [Int] -> IO ()
-deleteTodo todoFile nums = do
-  c <- TIO.readFile todoFile
+deleteTodo :: (HasLogFunc env, HasConfig env) => [Int] -> RIO env ()
+deleteTodo nums = do
+  env <- ask
+  let p = todoFile $ env ^. configL
+  c <- liftIO $ TIO.readFile p
   let (filtered, rest) = filterTodoLines nums $ T.lines c
-  writeTodoLines todoFile rest
-  putStrLn $ "Removed items:"
-  putStrLn $ T.unpack $ concatTodoLines filtered
+  liftIO $ writeTodoLines p rest
+  liftIO $ putStrLn $ "Removed items:"
+  liftIO $ putStrLn $ T.unpack $ concatTodoLines filtered
 
-addPriority :: FilePath -> Int -> Priority -> IO ()
-addPriority todoFile lineNum pri = do
-  c <- TIO.readFile todoFile
+addPriority :: (HasLogFunc env, HasConfig env) => Int -> Priority -> RIO env ()
+addPriority lineNum pri = do
+  env <- ask
+  let p = todoFile $ env ^. configL
+  c <- liftIO $ TIO.readFile p
   let all = T.lines c
   let item = getTodoLine lineNum all
-  (Incomplete todo) <- parseItemOrDie item
-  let t' = Incomplete $ todo{tPriority=Just pri}
-  writeTodoLines todoFile $ modifyTodoLine lineNum all (show t')
-  putStrLn $ "Prioritized item:"
-  putStrLn $ show t'
+  todo <- liftIO $ parseItemOrDie item
+  let t' = fmap (\i -> i{tPriority=Just pri}) todo :: Todo TodoItem
+  liftIO $ writeTodoLines p $ modifyTodoLine lineNum all (show t')
+  liftIO $ putStrLn $ "Prioritized item:"
+  liftIO $ putStrLn $ show t'
 
-deletePriority :: FilePath -> Int -> IO ()
-deletePriority todoFile lineNum = do
-  c <- TIO.readFile todoFile
+deletePriority :: (HasLogFunc env, HasConfig env) => Int -> RIO env ()
+deletePriority lineNum = do
+  env <- ask
+  let p = todoFile $ env ^. configL
+  c <- liftIO $ TIO.readFile p
   let all = T.lines c
   let item = getTodoLine lineNum all
-  (Incomplete todo) <- parseItemOrDie item
-  let t' = Incomplete $ todo{tPriority=Nothing}
-  writeTodoLines todoFile $ modifyTodoLine lineNum all (show t')
-  putStrLn $ "Deprioritized item:"
-  putStrLn $ show t'
+  todo <- liftIO $ parseItemOrDie item
+  let t' = fmap (\i -> i{tPriority=Nothing}) todo :: Todo TodoItem
+  liftIO $ writeTodoLines p $ modifyTodoLine lineNum all (show t')
+  liftIO $ putStrLn $ "Deprioritized item:"
+  liftIO $ putStrLn $ show t'
 
-pullOrigins :: TodoConfig -> IO ()
-pullOrigins c = do
-  let f = todoFile c
-  let os = origins c
-  let githubOrigins = github os
-  let gitlabOrigins = gitlab os
-  ghs <- fetchGithubIssues githubOrigins
-  gls <- fetchGitlabIssues gitlabOrigins
-  c <- TIO.readFile f
-  let todos = parse todoParser f $ T.unpack c
-  case todos of
-    Left err -> die $ show err
-    Right ts -> do
-      let ghtodos = map mkTodoFromGithubIssue ghs
-      let gltodos = map mkTodoFromGitlabTodo gls
-      let newTodos = nubBy compareByOrigin $ ts ++ ghtodos ++ gltodos
-      backupFile f
-      writeFile f (show newTodos)
+pullRemotes :: (HasLogFunc env, HasConfig env)  => [T.Text] -> RIO env ()
+pullRemotes which = do
+    env <- ask
+    let c = env ^. configL
+    let f = todoFile c
+    let remotes = filterRemotes which c
+    liftIO $ putStrLn $ "Fetching from remotes: " <> (show $ T.intercalate ", " $ map remoteName remotes)
+    remoteTodos <- liftIO $ fetchRemoteTodos [remoteConfig x | x <- remotes]
+    c <- liftIO $ TIO.readFile f
+    todos <- liftIO $ parseOrDie f c
+    let rs = map mkTodoFromRemoteTodo remoteTodos
+    let newTodos = nubBy compareByOrigin $ todos ++ rs
+    liftIO $ backupFile f
+    liftIO $ TIO.writeFile f (T.pack $ show newTodos)
+  where filterRemotes [] c = todoRemotes c
+        filterRemotes (x:xs) c = filter (\r -> (remoteName r) `elem` which) $ todoRemotes c
 
-compareByOrigin :: Todo -> Todo -> Bool
+compareByOrigin :: Todo TodoItem -> Todo TodoItem -> Bool
 compareByOrigin (Incomplete t1) (Incomplete t2) = (tDescription t1) == (tDescription t2) && (tMetadata t1) == (tMetadata t2)
 compareByOrigin (Completed _) (Completed _) = False
 
-mkTodoFromGithubIssue :: GithubIssueDetails -> Todo
-mkTodoFromGithubIssue g = Incomplete $ TodoItem { tPriority=Nothing
+mkTodoFromRemoteTodo :: RemoteTodo -> Todo TodoItem
+mkTodoFromRemoteTodo (RemoteTodoGithub g) = Incomplete $ TodoItem { tPriority=Nothing
                                                 , tDescription=githubIssueTitle g
                                                 , tMetadata=[ MetadataProject $ Project $ githubIssueProject g
                                                             , MetadataContext $ Context $ githubIssueGroup g
@@ -212,10 +225,7 @@ mkTodoFromGithubIssue g = Incomplete $ TodoItem { tPriority=Nothing
                                                 , tCreatedAt=Nothing
                                                 , tDoneAt=Nothing
                                                 }
-  where url2link (ForgeTypes.Url s) = Link s
-
-mkTodoFromGitlabTodo :: GitlabTodoDetails -> Todo
-mkTodoFromGitlabTodo g = Incomplete $ TodoItem { tPriority=Nothing
+mkTodoFromRemoteTodo (RemoteTodoGitlab g) = Incomplete $ TodoItem { tPriority=Nothing
                                                , tDescription=gitlabTodoTitle g
                                                , tMetadata=[ MetadataProject $ Project $ gitlabTodoProject g
                                                            , MetadataContext $ Context $ gitlabTodoGroup g
@@ -224,33 +234,30 @@ mkTodoFromGitlabTodo g = Incomplete $ TodoItem { tPriority=Nothing
                                                , tCreatedAt=Nothing
                                                , tDoneAt=Nothing
                                                }
-  where url2link (ForgeTypes.Url s) = Link s
 
-fetchGithubIssues :: [FilePath] -> IO ([GithubIssueDetails])
-fetchGithubIssues cs = do
+url2link :: ForgeTypes.Url -> Link
+url2link (ForgeTypes.Url s) = Link s
+
+fetchRemoteTodos :: [RemoteConfig] -> IO ([RemoteTodo])
+fetchRemoteTodos cs = do
   xss <- forM cs $ \c -> do
-    c' <- ForgeUtils.readConfig c
-    let token = githubAccessToken c'
-    res <- Github.listIssues' token
-    case res of
-      Left err -> die $ show err
-      Right xs -> return xs
+    case c of
+      RemoteConfigGitlab c' -> do
+        res <- Gitlab.listTodos' c'
+        case res of
+          Left err -> die $ show err
+          Right xs -> return $ map RemoteTodoGitlab xs
+      RemoteConfigGithub c' -> do
+        res <- Github.listIssues' c'
+        case res of
+          Left err -> die $ show err
+          Right xs -> return $ map RemoteTodoGithub xs
   return $ concat xss
 
-fetchGitlabIssues :: [FilePath] -> IO ([GitlabTodoDetails])
-fetchGitlabIssues cs = do
-  xss <- forM cs $ \c -> do
-    c' <- ForgeUtils.readConfig c
-    let token = gitlabAccessToken c'
-    res <- Gitlab.listTodos' token
-    case res of
-      Left err -> die $ show err
-      Right xs -> return xs
-  return $ concat xss
 
-getTodoLine :: Int -> [T.Text] -> String
-getTodoLine 0 xs   = T.unpack $ xs !! 0
-getTodoLine num xs = T.unpack $ xs !! (num - 1)
+getTodoLine :: Int -> [T.Text] -> T.Text
+getTodoLine 0 xs   = xs !! 0
+getTodoLine num xs = xs !! (num - 1)
 
 modifyTodoLine :: Int -> [T.Text] -> String -> [T.Text]
 modifyTodoLine i xs l = LX.modifyAt (i - 1) (\_ -> T.pack l) xs
@@ -273,12 +280,19 @@ filterTodoLines is xs = (filtered, rest)
   where filtered = [x | (_, x) <- filter (\(l, _) -> l `elem` is) $ zip [1..] xs]
         rest = [x | (_, x) <- filter (\(l, _) -> not $ l `elem` is) $ zip [1..] xs]
 
-parseItemOrDie :: String -> IO (Todo)
+parseItemOrDie :: T.Text -> IO (Todo TodoItem)
 parseItemOrDie i = do
   let todo = parse todoItem "" i
   case todo of
     Left err   -> die $ show err
     Right item -> return item
+
+parseOrDie :: FilePath -> T.Text -> IO ([Todo TodoItem])
+parseOrDie p xs = do
+  let todos = parse todoParser p xs
+  case todos of
+    Left err    -> die $ show err
+    Right items -> return items
 
 backupFile :: FilePath -> IO ()
 backupFile p = copyFile p (p <> ".bak")

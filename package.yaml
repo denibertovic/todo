@@ -19,9 +19,21 @@ extra-source-files:
 # common to point users to the README.md file.
 description:         Please see the README on Github at <https://github.com/denibertovic/todo#readme>
 
+ghc-options:
+# - -Werror
+- -Wall
+- -Wcompat
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wredundant-constraints
+
+default-extensions:
+  - NoImplicitPrelude
+
 dependencies:
 - base >= 4.7 && < 5
 - forge
+- rio
 - ilist
 - time
 - text

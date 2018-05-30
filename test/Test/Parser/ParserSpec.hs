@@ -2,10 +2,11 @@
 
 module Test.Parser.ParserSpec where
 
+import           RIO                hiding (many)
+
 import           Todo.Parser
 import           Todo.Types
 
-import           Data.Monoid        ((<>))
 import qualified Data.Text          as T
 import           Data.Time.Calendar (Day (..), fromGregorian)
 import           Test.Hspec         (Spec, describe, it, shouldBe, shouldNotBe)
@@ -131,7 +132,7 @@ sampleTodoPriAWithTags = Incomplete TodoItem { tDescription="foo bar"
                                              , MetadataTag $  Tag "tagKeyFoo" "bar"
                                              ]
                                  }
-sampleTodoWithUrl = Incomplete TodoItem { tDescription=T.unpack $ T.strip $ T.pack sampleTodoWithUrlRaw
+sampleTodoWithUrl = Incomplete TodoItem { tDescription=T.strip $ sampleTodoWithUrlRaw
                                  , tPriority=Nothing
                                  , tCreatedAt=Nothing
                                  , tDoneAt=Nothing

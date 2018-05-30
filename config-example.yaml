@@ -1,0 +1,23 @@
+---
+todo_dir: /tmp/todo
+todo_file: /tmp/todo/todo.txt
+done_file: /tmp/todo/done.txt
+report_file: /tmp/todo/report.txt
+
+remotes:
+  # Can be more of them depending on hosted vs.
+  # enterprise (elf-hosted)
+  - name: github
+    access_token: "secret"
+    api_url: https://api.github.com/
+    type: github
+  - name: gitlab
+    access_token: "secret"
+    api_url: https://gitlab.com/api/v4/
+    type: gitlab
+  # EXAMPLE
+  # - name: private_gitlab
+  #   access_token: "SECRET"
+  #   api_url: https://mygitlab.example.com/api/v4/
+  #   type: gitlab
+  # NOTE: Supported types are: gitlab, github

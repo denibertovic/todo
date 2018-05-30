@@ -3,22 +3,23 @@
 
 module Todo.Parser where
 
+import           Prelude             (read)
+import           RIO                 hiding (link, many, try, (<|>))
+
 import           Control.Monad       (join, void)
 import           Data.Bool           (not)
 import qualified Data.HashMap.Strict as HM
 import           Data.List           (nub)
 import           Data.List           (intercalate)
-import           Data.Monoid         ((<>))
 import           Data.Text           (Text)
 import qualified Data.Text           as T
 import qualified Data.Text.IO        as TIO
 import           Data.Time.Calendar  (Day (..), fromGregorian)
 import           Data.Void           (Void)
-import           Text.Pretty.Simple  (pPrint)
 
 import           Text.Parsec
 import           Text.Parsec.Char    (char, digit, string)
-import           Text.Parsec.String  (Parser)
+import           Text.Parsec.Text    (Parser)
 import qualified Text.Parsec.Token   as P
 
 import           Todo.Types
@@ -65,7 +66,7 @@ context = try $ do
   -- ctx <- manyTill alphaNum (space <|> endOfLine)
   ctx <- many1 (noneOf " \n\r\t")
   _ <- sc <|> eof
-  return $ MetadataContext $ Context ctx
+  return $ MetadataContext $ Context $ T.pack ctx
 
 project :: Parser Metadata
 project = try $ do
@@ -73,7 +74,7 @@ project = try $ do
   -- p <- manyTill alphaNum (space <|> endOfLine)
   p <- many1 (noneOf " \n\r\t")
   _ <- sc <|> eof
-  return $ MetadataProject $ Project p
+  return $ MetadataProject $ Project $ T.pack p
 
 kv :: Parser Metadata
 kv = try $ do
@@ -81,7 +82,7 @@ kv = try $ do
   _ <- char ':'
   value <- tagValue
   _ <- sc <|> eof
-  return $ MetadataTag $ Tag key value
+  return $ MetadataTag $ Tag (T.pack key) (T.pack value)
 
 tagKey :: Parser String
 tagKey = many1 (noneOf ": \n\r\t")
@@ -114,14 +115,14 @@ link = try $ do
   proto <- string "https:" <|> string "http:"
   rest <- many1 $ noneOf " \n\r\t"
   _ <- sc <|> eof
-  return $ MetadataLink $ Link $ proto <> rest
+  return $ MetadataLink $ Link $ T.pack $ proto <> rest
 
 word :: Parser Metadata
 word = do
   -- word <- manyTill (noneOf " \t\n\r") (space <|> endOfLine)
   word <- many1 $ noneOf " \t\n\r"
   _ <- sc <|> eof
-  return $ MetadataString word
+  return $ MetadataString $ T.pack word
 
 metadata :: Parser Metadata
 metadata =
@@ -133,7 +134,7 @@ pleaseNoMore :: Parser ()
 pleaseNoMore = void (endOfLine) <|> eof
 
 
-incompleteTask :: Parser Todo
+incompleteTask :: Parser (Todo TodoItem)
 incompleteTask = do
     pri <- optionMaybe priority
     _ <- sc
@@ -146,7 +147,7 @@ incompleteTask = do
     let m' = filter (isMetadataStringOrLink) m
     let desc = [ getIt x | x <- m']
     let m'' = filter (not . isMetadataStringOrLink) m
-    return $ Incomplete TodoItem { tDescription=intercalate " " desc
+    return $ Incomplete TodoItem { tDescription=T.intercalate " " desc
                                  , tPriority=pri
                                  , tCreatedAt=startDate
                                  , tDoneAt=endDate
@@ -169,19 +170,19 @@ isMetadataStringOrLink m = case m of
 -- It is assumed that a completed task starts with x and a optional completion
 -- date. It is also assumed that the rest of the string will be an incomplete
 -- task.
-completedTask :: Parser Todo
+completedTask :: Parser (Todo TodoItem)
 completedTask = do
   _ <- char 'x'
   _ <- sc
   (Incomplete item) <- incompleteTask
   return $ Completed item
 
-todoItem :: Parser Todo
+todoItem :: Parser (Todo TodoItem)
 todoItem = choice [ completedTask, incompleteTask ]
 
-todoParser :: Parser [Todo]
+todoParser :: Parser [Todo TodoItem]
 todoParser = between sc eof (many todoItem)
 
-validateLine :: String -> Either ParseError Todo
+validateLine :: Text -> Either ParseError (Todo TodoItem)
 validateLine content = parse todoItem "" content
 
