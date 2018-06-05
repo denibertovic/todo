@@ -97,8 +97,17 @@ listTodos filters verbose = do
   ts <- liftIO $ parseOrDie p c
   let todos =  sort $ filter (hasProjAndCtx projects contexts) $ zip [1..] ts
   case verbose of
-    False -> liftIO $ mapM_ (printItem . hideVerboseItems) todos
-    True  -> liftIO $ mapM_ printItem todos
+    False -> do
+      liftIO $ mapM_ (printItem . hideVerboseItems) todos
+      liftIO $ printSummary (length todos) (length ts)
+    True  -> do
+      liftIO $ mapM_ printItem todos
+      liftIO $ printSummary (length todos) (length ts)
+
+printSummary :: Int -> Int -> IO ()
+printSummary shown all = do
+      putStrLn $ T.unpack "--"
+      putStrLn $ T.unpack "TODO: " <> (show shown) <> " of " <> (show all) <> " tasks shown"
 
 printItem :: (Int, Todo TodoItem) -> IO ()
 printItem (lineNum, item) = colorPrintChunks $ [chunk (show lineNum) & fore green, chunk " ", chunkize item, chunk "\n"]
