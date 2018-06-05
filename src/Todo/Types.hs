@@ -168,7 +168,7 @@ instance {-# OVERLAPPING #-} Show [Todo TodoItem] where
   show xs = T.unpack $ (T.intercalate "\n" $ (map (T.pack . show)  xs)) <> "\n"
 
 instance Show Tag where
-  show (Tag key value)  = show $ key <> ":" <> value
+  show (Tag key value)  = T.unpack $ key <> ":" <> value
   show (TagDueDate d)   = "due:" <> (show d)
   show (TagOrigin link) = "origin:" <> (show link)
 
