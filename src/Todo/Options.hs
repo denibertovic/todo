@@ -21,6 +21,7 @@ data TodoCommand = AddTodo T.Text
                  | AddPriority Int Priority
                  | DeletePriority Int
                  | PullRemotes [T.Text]
+                 | Archive
                  deriving (Eq, Show)
 
 data TodoOpts = TodoOpts {
@@ -56,6 +57,7 @@ todoCmds env = subparser (  cmdList env
                          <> cmdAddPriority env
                          <> cmdDeletePriority env
                          <> cmdPullRemotes env
+                         <> cmdArchive env
                          )
 
 cmdList env = command "ls" infos
@@ -92,6 +94,11 @@ cmdDeletePriority env = command "depri" infos
     where infos = info (options <**> helper) desc
           desc = progDesc "Deletes priority for the specified todo"
           options = DeletePriority <$> (argument auto (metavar "LINENUM"))
+
+cmdArchive env = command "archive" infos
+    where infos = info (options <**> helper) desc
+          desc = progDesc "Moves all done tasks from todo.txt to done.txt"
+          options = pure Archive
 
 todoOpts :: Env -> Parser TodoOpts
 todoOpts env = TodoOpts <$> configPathOpt <*> debugOpt <*> verboseOpt <*> (todoCmds env)

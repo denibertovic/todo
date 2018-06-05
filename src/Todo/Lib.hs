@@ -65,6 +65,7 @@ entrypoint (TodoOpts configPath debug verbose cmd) = do
       AddPriority line pri -> runRIO app $ addPriority line pri
       DeletePriority line  -> runRIO app $ deletePriority line
       PullRemotes rs       -> runRIO app $ pullRemotes rs
+      Archive              -> runRIO app $ archiveTodos
 
 isProject :: String -> Bool
 isProject (x:xs) = case x of
@@ -166,6 +167,18 @@ deleteTodo nums = do
   let (filtered, rest) = filterTodoLines nums $ T.lines c
   liftIO $ writeTodoLines p rest
   liftIO $ putStrLn $ "Removed items:"
+  liftIO $ putStrLn $ T.unpack $ concatTodoLines filtered
+
+archiveTodos :: (HasLogFunc env, HasConfig env) => RIO env ()
+archiveTodos= do
+  env <- ask
+  let t = todoFile $ env ^. configL
+  let d = todoDoneFile $ env ^. configL
+  c <- liftIO $ TIO.readFile t
+  let (filtered, rest) = filterDoneTodos $ T.lines c
+  liftIO $ writeTodoLines d filtered
+  liftIO $ writeTodoLines t rest
+  liftIO $ putStrLn $ "Archived items:"
   liftIO $ putStrLn $ T.unpack $ concatTodoLines filtered
 
 addPriority :: (HasLogFunc env, HasConfig env) => Int -> Priority -> RIO env ()
@@ -279,6 +292,11 @@ filterTodoLines :: [Int] -> [T.Text] -> ([T.Text], [T.Text])
 filterTodoLines is xs = (filtered, rest)
   where filtered = [x | (_, x) <- filter (\(l, _) -> l `elem` is) $ zip [1..] xs]
         rest = [x | (_, x) <- filter (\(l, _) -> not $ l `elem` is) $ zip [1..] xs]
+
+filterDoneTodos :: [T.Text] -> ([T.Text], [T.Text])
+filterDoneTodos xs = (filtered, rest)
+  where filtered = [x | x <- filter (\x -> T.isPrefixOf "x " x) xs]
+        rest = [x | x <- filter (\x -> not $ T.isPrefixOf "x " x) xs]
 
 parseItemOrDie :: T.Text -> IO (Todo TodoItem)
 parseItemOrDie i = do

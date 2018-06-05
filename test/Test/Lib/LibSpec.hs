@@ -2,6 +2,7 @@
 
 module Test.Lib.LibSpec where
 
+import           Prelude         (print)
 import           RIO
 
 import           Data.List       (head, last, (!!))
@@ -29,21 +30,21 @@ spec =
 
     it "Tests completing a todo" $ do
       withTempTodo $ \app -> do
-        runRIO app $ completeTodo [4]
+        runRIO app $ completeTodo [1]
         content <- TIO.readFile (todoFile $ app ^. configL)
-        (last $ T.lines content) == (testTodoTxtLines !! 2) `shouldBe` True
+        (last $ T.lines content) == (getTodo 5 testTodoTxtLines) `shouldBe` True
 
     it "Tests deleting a todo" $ do
       withTempTodo $ \app -> do
-        runRIO app $ deleteTodo [4]
+        runRIO app $ deleteTodo [1]
         content <- TIO.readFile (todoFile $ app ^. configL)
-        (last $ T.lines content) == (testTodoTxtLines !! 2) `shouldBe` True
+        (last $ T.lines content) == (getTodo 5 testTodoTxtLines) `shouldBe` True
 
     it "Tests adding priority for a todo" $ do
       withTempTodo $ \app -> do
-        runRIO app $ addPriority 4 A
+        runRIO app $ addPriority 3 A
         content <- TIO.readFile (todoFile $ app ^. configL)
-        (last $ T.lines content) == ("(A) " <> testTodoTxtLines !! 3) `shouldBe` True
+        (getTodo 3 $ T.lines content) == ("(A) " <> (getTodo 3 testTodoTxtLines)) `shouldBe` True
 
     it "Tests changing priority for a todo" $ do
       withTempTodo $ \app -> do
@@ -56,6 +57,21 @@ spec =
         runRIO app $ deletePriority 1
         content <- TIO.readFile (todoFile $ app ^. configL)
         (head $ T.lines content) == "First Foo @context" `shouldBe` True
+
+    it "Tests filtering done todos" $ do
+      withTempTodo $ \app -> do
+        content <- TIO.readFile (todoFile $ app ^. configL)
+        let (f, r) = filterDoneTodos $ T.lines content
+        f == [getTodo 5 testTodoTxtLines] `shouldBe` True
+        r == (take 4 testTodoTxtLines) `shouldBe` True
+
+    it "Tests archiving todos" $ do
+      withTempTodo $ \app -> do
+        runRIO app $ archiveTodos
+        content <- TIO.readFile (todoFile $ app ^. configL)
+        done <- TIO.readFile (todoDoneFile $ app ^. configL)
+        (last $ T.lines done) == (getTodo 5 testTodoTxtLines) `shouldBe` True
+
 
 testConfig :: FilePath -> TodoConfig
 testConfig d = TodoConfig { todoDir=d
@@ -70,7 +86,12 @@ testTodoTxtLines = [ "(A) First Foo @context"
                    , "(B) Second Bar +project @context"
                    , "Third Baz baz:dinamo"
                    , "Test origin bla origin:https://github.com/foo/bar/issue/1"
+                   , "x Some todo that's done"
                    ]
+
+-- | Helper function so we don't confused 0 based and 1 based indexes
+getTodo :: Int -> [T.Text] -> T.Text
+getTodo i xs = xs !! (i - 1)
 
 withTempTodo :: (App -> IO a) -> IO a
 withTempTodo f = do
