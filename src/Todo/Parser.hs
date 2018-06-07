@@ -29,6 +29,7 @@ sc = skipMany $ char ' '
 
 -- |Date: 2017-02-23
 -- Supports 2 or 4 digit year, and 1 or 2 digit month and day.
+-- Inspired by: https://github.com/jecxjo/todo.hs
 date :: Parser Day
 date = do
     year <- twoToFourDigits
