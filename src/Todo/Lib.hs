@@ -5,6 +5,7 @@ module Todo.Lib where
 
 import           Prelude            (print, putStrLn, (!!))
 import           RIO
+import qualified RIO.Text as T
 
 import           Control.Monad      (when)
 import           Control.Monad      (forM)
@@ -240,8 +241,8 @@ compareByOrigin (Completed _) (Completed _) = False
 mkTodoFromRemoteTodo :: RemoteTodo -> Todo TodoItem
 mkTodoFromRemoteTodo (RemoteTodoGithub g) = Incomplete $ TodoItem { tPriority=Nothing
                                                 , tDescription=githubIssueTitle g
-                                                , tMetadata=[ MetadataProject $ Project $ githubIssueProject g
-                                                            , MetadataContext $ Context $ githubIssueGroup g
+                                                , tMetadata=[ MetadataProject $ Project $ T.toLower $ githubIssueProject g
+                                                            , MetadataContext $ Context $ T.toLower $ githubIssueGroup g
                                                             , MetadataTag $ TagOrigin $ url2link $ githubIssueUrl g
                                                             ]
                                                 , tCreatedAt=Nothing
@@ -249,8 +250,8 @@ mkTodoFromRemoteTodo (RemoteTodoGithub g) = Incomplete $ TodoItem { tPriority=No
                                                 }
 mkTodoFromRemoteTodo (RemoteTodoGitlab g) = Incomplete $ TodoItem { tPriority=Nothing
                                                , tDescription=gitlabTodoTitle g
-                                               , tMetadata=[ MetadataProject $ Project $ gitlabTodoProject g
-                                                           , MetadataContext $ Context $ gitlabTodoGroup g
+                                               , tMetadata=[ MetadataProject $ Project $ T.toLower $ gitlabTodoProject g
+                                                           , MetadataContext $ Context $ T.toLower $ gitlabTodoGroup g
                                                            , MetadataTag $ TagOrigin $ url2link $ gitlabTodoUrl g
                                                            ]
                                                , tCreatedAt=Nothing
