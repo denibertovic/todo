@@ -323,4 +323,6 @@ parseOrDie p xs = do
     Right items -> return items
 
 backupFile :: FilePath -> IO ()
-backupFile p = copyFile p (p <> ".bak")
+backupFile p = do
+  exists <- doesFileExist p
+  when exists (copyFile p (p <> ".bak"))
