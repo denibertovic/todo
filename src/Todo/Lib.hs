@@ -186,8 +186,8 @@ archiveTodos= do
   let d = todoDoneFile $ env ^. configL
   c <- liftIO $ TIO.readFile t
   let (filtered, rest) = filterDoneTodos $ T.lines c
-  liftIO $ writeTodoLines d filtered
-  liftIO $ appendTodoLines t rest
+  liftIO $ appendTodoLines d filtered
+  liftIO $ writeTodoLines t rest
   liftIO $ putStrLn $ "Archived items:"
   liftIO $ putStrLn $ T.unpack $ concatTodoLines filtered
 
