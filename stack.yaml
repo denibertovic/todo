@@ -39,13 +39,14 @@ packages:
 - .
 - location:
     git: https://github.com/denibertovic/forge.git
-    commit: a40684fcc403840feeb4cc25b26db30900a46b76
+    commit: b0540e1930d03dcf176abbe56bdd4e7231b55c84
   extra-dep: true
 #
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
 - rio-0.1.2.0
+- tar-conduit-0.3.0
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
