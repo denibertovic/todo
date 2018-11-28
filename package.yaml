@@ -1,7 +1,7 @@
 name:                todo
 version:             0.1.0.2
 github:              "denibertovic/todo"
-license:             BSD3
+license:             LGPL-3
 author:              "Deni Bertovic"
 maintainer:          "deni@denibertovic.com"
 copyright:           "2018 Deni Bertovic"
