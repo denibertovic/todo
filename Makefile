@@ -20,6 +20,10 @@ test:
 release:
 	@git tag ${VERSION} && git push --tags
 
+## Print current version
+version:
+	@echo ${VERSION}
+
 ## Show help screen.
 help:
 	@echo "Please use \`make <target>' where <target> is one of\n\n"
