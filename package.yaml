@@ -49,6 +49,7 @@ dependencies:
 - optparse-applicative
 - rainbow
 - temporary
+- vector
 
 library:
   source-dirs: src

@@ -263,20 +263,42 @@ url2link (ForgeTypes.Url s) = Link s
 
 fetchRemoteTodos :: [RemoteConfig] -> IO ([RemoteTodo])
 fetchRemoteTodos cs = do
-  xss <- forM cs $ \c -> do
-    case c of
-      RemoteConfigGitlab c' -> do
-        res <- Gitlab.listTodos' c'
-        case res of
-          Left err -> die $ show err
-          Right xs -> return $ map RemoteTodoGitlab xs
-      RemoteConfigGithub c' -> do
-        res <- Github.listIssues' c'
-        case res of
-          Left err -> die $ show err
-          Right xs -> return $ map RemoteTodoGithub xs
+  xss <-
+    forM cs $ \c -> do
+      case c of
+        RemoteConfigGitlab c' ignores -> do
+          res <- Gitlab.listTodos' c'
+          case res of
+            Left err -> die $ show err
+            Right xs ->
+              return $
+              map RemoteTodoGitlab $
+              filterOutIgnores gitlabTodoGroup gitlabTodoProject ignores xs
+        RemoteConfigGithub c' ignores -> do
+          res <- Github.listIssues' c'
+          case res of
+            Left err -> die $ show err
+            Right xs ->
+              return $
+              map RemoteTodoGithub $
+              filterOutIgnores githubIssueGroup githubIssueProject ignores $ xs
   return $ concat xss
-
+  where
+    filterOutIgnores g p igns xs =
+      filter
+        (\x ->
+           not $
+           inIgnoreGroups (g x) (getIgnoreGroups igns) ||
+           inIgnoreProjects (g x, p x) (getIgnoreProjects igns))
+        xs
+    getIgnoreGroups igns =
+      [T.toLower g | i@(IgnoreEntireGroup (IgnoreGroup g)) <- igns]
+    getIgnoreProjects igns =
+      [ (T.toLower g, T.toLower p)
+      | i@(IgnoreSpecificRepo (IgnoreGroup g) (IgnoreRepo p)) <- igns
+      ]
+    inIgnoreGroups x igns = T.toLower x `elem` igns
+    inIgnoreProjects (x, y) igns = (T.toLower x, T.toLower y) `elem` igns
 
 getTodoLine :: Int -> [T.Text] -> T.Text
 getTodoLine 0 xs   = xs !! 0

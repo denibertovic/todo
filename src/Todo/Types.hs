@@ -6,12 +6,15 @@ module Todo.Types where
 
 import           RIO
 
-import           Data.Aeson          (FromJSON, Value (..), parseJSON, (.:))
+import           Data.Aeson          (FromJSON, Value (..), parseJSON, (.:), (.:?))
 import qualified Data.Aeson          as JSON
+import qualified Data.Aeson.Types    as JSON
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Text           as T
+import qualified Data.Vector         as V
 import           Data.Time.Calendar  (Day (..))
 import           Data.Time.Clock     (UTCTime)
+import           Control.Monad       (mapM)
 
 import           Forge.Github.Types  (GithubConfig (..),
                                       GithubIssueDetails (..))
@@ -31,14 +34,43 @@ instance HasLogFunc App where
 -- | Type of remotes that we support. Add new types here
 data RemoteType = Gitlab | Github deriving (Eq, Show)
 
-data RemoteConfig = RemoteConfigGitlab GitlabConfig | RemoteConfigGithub GithubConfig deriving (Eq, Show)
+newtype IgnoreGroup = IgnoreGroup T.Text deriving (Eq, Show)
+newtype IgnoreRepo = IgnoreRepo T.Text deriving (Eq, Show)
+
+data Ignore = IgnoreEntireGroup IgnoreGroup
+            | IgnoreSpecificRepo IgnoreGroup IgnoreRepo
+            deriving (Eq, Show)
+
+instance FromJSON Ignore where
+  parseJSON (JSON.String s) = case (T.splitOn "/" s) of
+      [g, p] -> case p of
+                  "*" -> return $ IgnoreEntireGroup (IgnoreGroup g)
+                  "" -> fail ignoreErrMsg
+                  otherwise -> return $ IgnoreSpecificRepo (IgnoreGroup g) (IgnoreRepo p)
+      otherwise -> fail ignoreErrMsg
+  parseJSON _ = fail ignoreErrMsg
+
+ignoreErrMsg :: String
+ignoreErrMsg = "Please specify the remote ignore list using the following format: 'org/repo' or 'org/*'."
+
+data RemoteConfig = RemoteConfigGitlab GitlabConfig [Ignore]
+                  | RemoteConfigGithub GithubConfig [Ignore]
+                  deriving (Eq, Show)
 
 instance FromJSON RemoteConfig where
   parseJSON (JSON.Object o) = do
     t <- o .: "type"
+    igns <- o .:? "ignore"
+    ignores <- case igns of
+      Nothing -> return [] :: JSON.Parser [Ignore]
+      Just xs -> JSON.withArray "Array of Ignores" (\arr -> mapM parseJSON (V.toList arr)) xs
     c <- case t of
-      Gitlab -> RemoteConfigGitlab <$> parseJSON (JSON.Object o)
-      Github -> RemoteConfigGithub <$> parseJSON (JSON.Object o)
+      Gitlab -> do
+        c' <- parseJSON (JSON.Object o)
+        return $ RemoteConfigGitlab c' ignores
+      Github -> do
+        c'' <- parseJSON (JSON.Object o)
+        return $ RemoteConfigGithub c'' ignores
     return c
   parseJSON _ = fail "Expected Object for RemoteConfig value"
 
