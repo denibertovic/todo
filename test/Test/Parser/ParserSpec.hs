@@ -80,6 +80,12 @@ spec =
       it "Matches TodoItem with Tags at the end" $
         parse incompleteTask "" sampleTodoWithPriWithTagsRaw `shouldBe` Right sampleTodoPriAWithTags
 
+      it "Matches TodoItem with Due tag at the end" $
+        parse incompleteTask "" sampleTodoWithPriWithDueRaw `shouldBe` Right sampleTodoPriAWithDue
+
+      it "Matches TodoItem with Due Next tag at the end" $
+        parse incompleteTask "" sampleTodoWithPriWithDueNextRaw `shouldBe` Right sampleTodoPriAWithDueNext
+
       it "Matches Url as Text in Item" $
         parse incompleteTask "" sampleTodoWithUrlRaw `shouldBe` Right sampleTodoWithUrl
 
@@ -88,6 +94,8 @@ spec =
 sampleTodoRaw = "+project @context foo bar @context2 +project2"
 sampleTodoWithPriRaw = "(A) +project @context foo bar @context2 +project2"
 sampleTodoWithPriWithTagsRaw = "(A) +project @context foo bar @context2 +project2 tagKeyFoo:bar"
+sampleTodoWithPriWithDueRaw = "(A) +project @context foo bar @context2 +project2 due:2019-01-19"
+sampleTodoWithPriWithDueNextRaw = "(A) +project @context foo bar @context2 +project2 due:next"
 sampleTodoWithUrlRaw = "This is a url: https://example.com/foo\n"
 
 
@@ -129,9 +137,34 @@ sampleTodoPriAWithTags = Incomplete TodoItem { tDescription="foo bar"
                                              , MetadataContext $ Context "context"
                                              , MetadataContext $ Context "context2"
                                              , MetadataProject $ Project "project2"
-                                             , MetadataTag $  Tag "tagKeyFoo" "bar"
+                                             , MetadataTag $ Tag "tagKeyFoo" "bar"
                                              ]
                                  }
+
+sampleTodoPriAWithDue = Incomplete TodoItem { tDescription="foo bar"
+                                 , tPriority=Just A
+                                 , tCreatedAt=Nothing
+                                 , tDoneAt=Nothing
+                                 , tMetadata=[ MetadataProject $ Project "project"
+                                             , MetadataContext $ Context "context"
+                                             , MetadataContext $ Context "context2"
+                                             , MetadataProject $ Project "project2"
+                                             , MetadataTag $ TagDueDate $ fromGregorian 2019 01 19
+                                             ]
+                                 }
+
+sampleTodoPriAWithDueNext = Incomplete TodoItem { tDescription="foo bar"
+                                 , tPriority=Just A
+                                 , tCreatedAt=Nothing
+                                 , tDoneAt=Nothing
+                                 , tMetadata=[ MetadataProject $ Project "project"
+                                             , MetadataContext $ Context "context"
+                                             , MetadataContext $ Context "context2"
+                                             , MetadataProject $ Project "project2"
+                                             , MetadataTag TagNext
+                                             ]
+                                 }
+
 sampleTodoWithUrl = Incomplete TodoItem { tDescription=T.strip $ sampleTodoWithUrlRaw
                                  , tPriority=Nothing
                                  , tCreatedAt=Nothing

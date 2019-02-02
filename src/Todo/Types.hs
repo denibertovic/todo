@@ -167,6 +167,7 @@ space = " " :: String
 
 data Tag = Tag T.Text T.Text
          | TagDueDate Day
+         | TagNext
          | TagOrigin Link deriving (Eq)
 
 data Todo a = Completed a | Incomplete a deriving (Eq)
@@ -202,5 +203,6 @@ instance {-# OVERLAPPING #-} Show [Todo TodoItem] where
 instance Show Tag where
   show (Tag key value)  = T.unpack $ key <> ":" <> value
   show (TagDueDate d)   = "due:" <> (show d)
+  show TagNext          = "due:next"
   show (TagOrigin link) = "origin:" <> (show link)
 

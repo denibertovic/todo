@@ -91,6 +91,12 @@ tagKey = many1 (noneOf ": \n\r\t")
 tagValue :: Parser String
 tagValue = many1 (noneOf " \n\r\t")
 
+duenext :: Parser Metadata
+duenext = try $ do
+  _ <- string "due:next"
+  _ <- sc <|> eof
+  return $ MetadataTag $ TagNext
+
 duedate :: Parser Metadata
 duedate = try $ do
   _ <- string "due:"
@@ -106,7 +112,7 @@ origin = try $ do
   return $ MetadataTag $ TagOrigin l
 
 tag :: Parser Metadata
-tag = choice [ duedate, origin, kv ]
+tag = choice [ duenext, duedate, origin, kv ]
 
 colon :: Parser Char
 colon = char ':'
