@@ -11,13 +11,15 @@ remotes:
     access_token: "secret"
     api_url: https://api.github.com/
     type: github
+    ignore:
+      - org1/*
+      - org2/repo1
+    add_context:
+      - org1/*: foor
+      - org2/*: bar
+      - org2/repo: baz
   - name: gitlab
     access_token: "secret"
     api_url: https://gitlab.com/api/v4/
     type: gitlab
-  # EXAMPLE
-  # - name: private_gitlab
-  #   access_token: "SECRET"
-  #   api_url: https://mygitlab.example.com/api/v4/
-  #   type: gitlab
-  # NOTE: Supported types are: gitlab, github
+# NOTE: Supported types are: gitlab, github

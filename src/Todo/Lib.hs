@@ -12,6 +12,7 @@ import           Control.Monad      (forM)
 import qualified Data.ByteString    as BS
 import           Data.Either        (isRight)
 import           Data.List          (nubBy, sort)
+import           Data.Maybe         (catMaybes)
 import qualified Data.List.Index    as LX
 import qualified Data.Text          as T
 import qualified Data.Text.IO       as TIO
@@ -225,10 +226,12 @@ pullRemotes which = do
     let remotes = filterRemotes which c
     liftIO $ putStrLn $ "Fetching from remotes: " <> (show $ T.intercalate ", " $ map remoteName remotes)
     remoteTodos <- liftIO $ fetchRemoteTodos [remoteConfig x | x <- remotes]
+    liftIO $ putStrLn $ "Fetched: " <> (show $ length remoteTodos)
     c <- liftIO $ TIO.readFile f
     todos <- liftIO $ parseOrDie f c
     let rs = map mkTodoFromRemoteTodo remoteTodos
     let newTodos = nubBy compareByOrigin $ todos ++ rs
+    liftIO $ putStrLn $ "New todos added: " <> (show $ length newTodos - length todos)
     liftIO $ backupFile f
     liftIO $ TIO.writeFile f (T.pack $ show newTodos)
   where filterRemotes [] c = todoRemotes c
@@ -238,67 +241,83 @@ compareByOrigin :: Todo TodoItem -> Todo TodoItem -> Bool
 compareByOrigin (Incomplete t1) (Incomplete t2) = (tDescription t1) == (tDescription t2) && (tMetadata t1) == (tMetadata t2)
 compareByOrigin (Completed _) (Completed _) = False
 
-mkTodoFromRemoteTodo :: RemoteTodo -> Todo TodoItem
-mkTodoFromRemoteTodo (RemoteTodoGithub g) = Incomplete $ TodoItem { tPriority=Nothing
-                                                , tDescription=githubIssueTitle g
-                                                , tMetadata=[ MetadataProject $ Project $ T.toLower $ githubIssueProject g
-                                                            , MetadataContext $ Context $ T.toLower $ githubIssueGroup g
-                                                            , MetadataTag $ TagOrigin $ url2link $ githubIssueUrl g
-                                                            ]
-                                                , tCreatedAt=Nothing
-                                                , tDoneAt=Nothing
-                                                }
-mkTodoFromRemoteTodo (RemoteTodoGitlab g) = Incomplete $ TodoItem { tPriority=Nothing
-                                               , tDescription=gitlabTodoTitle g
-                                               , tMetadata=[ MetadataProject $ Project $ T.toLower $ gitlabTodoProject g
-                                                           , MetadataContext $ Context $ T.toLower $ gitlabTodoGroup g
-                                                           , MetadataTag $ TagOrigin $ url2link $ gitlabTodoUrl g
-                                                           ]
-                                               , tCreatedAt=Nothing
-                                               , tDoneAt=Nothing
-                                               }
+mkTodoFromRemoteTodo :: IsRemoteTodo a => a -> Todo TodoItem
+mkTodoFromRemoteTodo t =
+  Incomplete $
+  TodoItem
+    { tPriority = Nothing
+    , tDescription = remoteTitle t
+    , tMetadata =
+        (map MetadataContext $ remoteContext t) <>
+        [ MetadataProject $ Project $ T.toLower $ remoteProject t
+        , MetadataContext $ Context $ T.toLower $ remoteGroup t
+        , MetadataTag $ TagOrigin $ url2link $ remoteUrl t
+        ]
+    , tCreatedAt = Nothing
+    , tDoneAt = Nothing
+    }
 
 url2link :: ForgeTypes.Url -> Link
 url2link (ForgeTypes.Url s) = Link s
 
-fetchRemoteTodos :: [RemoteConfig] -> IO ([RemoteTodo])
+fetchRemoteTodos :: [RemoteConfig] -> IO [RemoteTodo]
 fetchRemoteTodos cs = do
   xss <-
     forM cs $ \c -> do
       case c of
-        RemoteConfigGitlab c' ignores -> do
+        RemoteConfigGitlab c' ignores ctx -> do
           res <- Gitlab.listTodos' c'
           case res of
             Left err -> die $ show err
             Right xs ->
               return $
-              map RemoteTodoGitlab $
-              filterOutIgnores gitlabTodoGroup gitlabTodoProject ignores xs
-        RemoteConfigGithub c' ignores -> do
+              map (addContexts ctx) $
+              filterOutIgnores ignores $ map (\x -> RemoteTodoGitlab x []) xs
+        RemoteConfigGithub c' ignores ctx -> do
           res <- Github.listIssues' c'
           case res of
             Left err -> die $ show err
             Right xs ->
               return $
-              map RemoteTodoGithub $
-              filterOutIgnores githubIssueGroup githubIssueProject ignores $ xs
+              map (addContexts ctx) $
+              filterOutIgnores ignores $ map (\x -> RemoteTodoGithub x []) xs
   return $ concat xss
   where
-    filterOutIgnores g p igns xs =
+    filterOutIgnores :: [Ignore] -> [RemoteTodo] -> [RemoteTodo]
+    filterOutIgnores igns xs =
       filter
         (\x ->
            not $
-           inIgnoreGroups (g x) (getIgnoreGroups igns) ||
-           inIgnoreProjects (g x, p x) (getIgnoreProjects igns))
+           inIgnoreGroups (remoteGroup x) (getIgnoreGroups igns) ||
+           inIgnoreProjects
+             (remoteGroup x, remoteProject x)
+             (getIgnoreProjects igns))
         xs
     getIgnoreGroups igns =
-      [T.toLower g | i@(IgnoreEntireGroup (IgnoreGroup g)) <- igns]
+      [T.toLower g | i@(IgnoreEntireGroup (RemoteGroup g)) <- igns]
     getIgnoreProjects igns =
       [ (T.toLower g, T.toLower p)
-      | i@(IgnoreSpecificRepo (IgnoreGroup g) (IgnoreRepo p)) <- igns
+      | i@(IgnoreSpecificRepo (RemoteGroup g) (RemoteRepo p)) <- igns
       ]
     inIgnoreGroups x igns = T.toLower x `elem` igns
     inIgnoreProjects (x, y) igns = (T.toLower x, T.toLower y) `elem` igns
+    addContexts :: [AddContext] -> RemoteTodo -> RemoteTodo
+    addContexts ctxs (RemoteTodoGitlab t cs) =
+      RemoteTodoGitlab t $
+      cs <> catMaybes (map (addCtx $ RemoteTodoGitlab t cs) ctxs)
+    addContexts ctxs (RemoteTodoGithub t cs) =
+      RemoteTodoGithub t $
+      cs <> catMaybes (map (addCtx $ RemoteTodoGithub t cs) ctxs)
+    addCtx :: RemoteTodo -> AddContext -> Maybe Context
+    addCtx t (AddToEntireGroup (RemoteGroup g) c) =
+      if ((T.toLower $ remoteGroup t) == (T.toLower g))
+        then (Just $ Context c)
+        else Nothing
+    addCtx t (AddToSpecificRepo (RemoteGroup g) (RemoteRepo p) c) =
+      if ((T.toLower $ remoteGroup t) == (T.toLower g)) &&
+         ((T.toLower $ remoteProject t) == (T.toLower p))
+        then (Just $ Context c)
+        else Nothing
 
 getTodoLine :: Int -> [T.Text] -> T.Text
 getTodoLine 0 xs   = xs !! 0

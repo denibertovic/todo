@@ -11,11 +11,13 @@ import qualified Data.Aeson          as JSON
 import qualified Data.Aeson.Types    as JSON
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Text           as T
+import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector         as V
 import           Data.Time.Calendar  (Day (..))
 import           Data.Time.Clock     (UTCTime)
 import           Control.Monad       (mapM)
 
+import           Forge.Types (Url)
 import           Forge.Github.Types  (GithubConfig (..),
                                       GithubIssueDetails (..))
 import           Forge.Gitlab.Types  (GitlabConfig (..), GitlabTodoDetails (..))
@@ -34,43 +36,66 @@ instance HasLogFunc App where
 -- | Type of remotes that we support. Add new types here
 data RemoteType = Gitlab | Github deriving (Eq, Show)
 
-newtype IgnoreGroup = IgnoreGroup T.Text deriving (Eq, Show)
-newtype IgnoreRepo = IgnoreRepo T.Text deriving (Eq, Show)
+newtype RemoteGroup = RemoteGroup T.Text deriving (Eq, Show)
+newtype RemoteRepo = RemoteRepo T.Text deriving (Eq, Show)
 
-data Ignore = IgnoreEntireGroup IgnoreGroup
-            | IgnoreSpecificRepo IgnoreGroup IgnoreRepo
+data AddContext = AddToEntireGroup RemoteGroup T.Text
+                | AddToSpecificRepo RemoteGroup RemoteRepo T.Text
+                deriving (Eq, Show)
+
+data Ignore = IgnoreEntireGroup RemoteGroup
+            | IgnoreSpecificRepo RemoteGroup RemoteRepo
             deriving (Eq, Show)
+
+instance FromJSON AddContext where
+  parseJSON (JSON.Object o) = do
+    let ((k,v):_) = HM.toList o
+    v' <- parseJSON v
+    case (T.splitOn "/" k) of
+      [g, p] -> case p of
+                  "*" -> return $ AddToEntireGroup (RemoteGroup g) v'
+                  "" -> fail addContextErrMsg
+                  otherwise -> return $ AddToSpecificRepo (RemoteGroup g) (RemoteRepo p) v'
+      otherwise -> fail addContextErrMsg
+  parseJSON _ = fail addContextErrMsg
+
+addContextErrMsg :: String
+addContextErrMsg = "Please specify AddContext using the following format: 'org/repo: foo' or 'org/*: bar'."
 
 instance FromJSON Ignore where
   parseJSON (JSON.String s) = case (T.splitOn "/" s) of
       [g, p] -> case p of
-                  "*" -> return $ IgnoreEntireGroup (IgnoreGroup g)
+                  "*" -> return $ IgnoreEntireGroup (RemoteGroup g)
                   "" -> fail ignoreErrMsg
-                  otherwise -> return $ IgnoreSpecificRepo (IgnoreGroup g) (IgnoreRepo p)
+                  otherwise -> return $ IgnoreSpecificRepo (RemoteGroup g) (RemoteRepo p)
       otherwise -> fail ignoreErrMsg
   parseJSON _ = fail ignoreErrMsg
 
 ignoreErrMsg :: String
 ignoreErrMsg = "Please specify the remote ignore list using the following format: 'org/repo' or 'org/*'."
 
-data RemoteConfig = RemoteConfigGitlab GitlabConfig [Ignore]
-                  | RemoteConfigGithub GithubConfig [Ignore]
+data RemoteConfig = RemoteConfigGitlab GitlabConfig [Ignore] [AddContext]
+                  | RemoteConfigGithub GithubConfig [Ignore] [AddContext]
                   deriving (Eq, Show)
 
 instance FromJSON RemoteConfig where
   parseJSON (JSON.Object o) = do
     t <- o .: "type"
     igns <- o .:? "ignore"
+    cs <- o .:? "add_context"
+    addCtxs <- case cs of
+      Nothing -> return [] :: JSON.Parser [AddContext]
+      Just xs -> JSON.withArray "Array of AddContext" (\arr -> mapM parseJSON (V.toList arr)) xs
     ignores <- case igns of
       Nothing -> return [] :: JSON.Parser [Ignore]
       Just xs -> JSON.withArray "Array of Ignores" (\arr -> mapM parseJSON (V.toList arr)) xs
     c <- case t of
       Gitlab -> do
         c' <- parseJSON (JSON.Object o)
-        return $ RemoteConfigGitlab c' ignores
+        return $ RemoteConfigGitlab c' ignores addCtxs
       Github -> do
         c'' <- parseJSON (JSON.Object o)
-        return $ RemoteConfigGithub c'' ignores
+        return $ RemoteConfigGithub c'' ignores addCtxs
     return c
   parseJSON _ = fail "Expected Object for RemoteConfig value"
 
@@ -81,7 +106,36 @@ instance FromJSON RemoteType where
 
 data Remote = Remote { remoteName :: T.Text, remoteConfig :: RemoteConfig } deriving (Eq, Show)
 
-data RemoteTodo = RemoteTodoGithub GithubIssueDetails | RemoteTodoGitlab GitlabTodoDetails deriving (Eq, Show)
+data RemoteTodo = RemoteTodoGithub GithubIssueDetails [Context]
+                | RemoteTodoGitlab GitlabTodoDetails [Context]
+                deriving (Eq, Show)
+
+-- appendContext :: [Context] -> RemoteTodo -> RemoteTodo
+-- appendContext xs (RemoteTodoGitlab t cs) = RemoteTodoGitlab t (cs <> xs)
+-- appendContext xs (RemoteTodoGithub t cs) = RemoteTodoGithub t (cs <> xs)
+
+class IsRemoteTodo a where
+  remoteProject :: a -> T.Text
+  remoteGroup :: a -> T.Text
+  remoteUrl :: a -> Url
+  remoteTitle :: a -> T.Text
+  remoteContext :: a -> [Context]
+
+instance IsRemoteTodo RemoteTodo where
+  remoteProject (RemoteTodoGithub t _) = githubIssueProject t
+  remoteProject (RemoteTodoGitlab t _) = gitlabTodoProject t
+
+  remoteGroup (RemoteTodoGithub t _) = githubIssueGroup t
+  remoteGroup (RemoteTodoGitlab t _) = gitlabTodoGroup t
+
+  remoteUrl (RemoteTodoGithub t _) = githubIssueUrl t
+  remoteUrl (RemoteTodoGitlab t _) = gitlabTodoUrl t
+
+  remoteTitle (RemoteTodoGithub t _) = githubIssueTitle t
+  remoteTitle (RemoteTodoGitlab t _) = gitlabTodoTitle t
+
+  remoteContext (RemoteTodoGithub t c) = c
+  remoteContext (RemoteTodoGitlab t c) = c
 
 instance FromJSON Remote where
     parseJSON (JSON.Object o) = do
