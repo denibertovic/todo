@@ -37,16 +37,16 @@ resolver: lts-11.5
 # will not be run. This is useful for tweaking upstream packages.
 packages:
 - .
-- location:
-    git: https://github.com/denibertovic/forge.git
-    commit: 0.3.1.0
-  extra-dep: true
-#
+
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
+- git: https://github.com/denibertovic/forge.git
+  # 0.3.1.0
+  commit: 5529bffe259b0e59f5116850925dd4b1a436f945
 - rio-0.1.2.0
 - tar-conduit-0.3.0
+- optparse-applicative-0.16.1.0
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
