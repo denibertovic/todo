@@ -1,4 +1,4 @@
-.PHONY: build repl test release help
+.PHONY: build repl test release help nix-build
 
 .DEFAULT_GOAL = help
 
@@ -7,6 +7,10 @@ VERSION ?= $(shell grep "^version:" todo.cabal | cut -d " " -f9)
 ## Run build
 build:
 	@stack build
+
+## Run nix build
+nix-build:
+	@nix-build -E 'with import <nixpkgs> { }; callPackage ./default.nix { }' -A todo.components.exes.todo
 
 ## Run repl
 repl:

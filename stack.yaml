@@ -15,7 +15,7 @@
 # resolver:
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
-resolver: lts-11.5
+resolver: lts-18.28
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -44,9 +44,9 @@ extra-deps:
 - git: https://github.com/denibertovic/forge.git
   # 0.3.1.0
   commit: 5529bffe259b0e59f5116850925dd4b1a436f945
-- rio-0.1.2.0
-- tar-conduit-0.3.0
-- optparse-applicative-0.16.1.0
+# - rio-0.1.2.0
+# - tar-conduit-0.3.0
+# - optparse-applicative-0.16.1.0
 
 # Override default flag values for local packages and extra-deps
 # flags: {}

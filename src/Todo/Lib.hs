@@ -112,7 +112,7 @@ printSummary shown all = do
       putStrLn $ T.unpack "TODO: " <> (show shown) <> " of " <> (show all) <> " tasks shown"
 
 printItem :: (Int, Todo TodoItem) -> IO ()
-printItem (lineNum, item) = colorPrintChunks $ [chunk (show lineNum) & fore green, chunk " ", chunkize item, chunk "\n"]
+printItem (lineNum, item) = colorPrintChunks $ [chunk (T.pack $ show lineNum) & fore green, chunk " ", chunkize item, chunk "\n"]
 
 hideVerboseItems :: (Int, Todo TodoItem) -> (Int, Todo TodoItem)
 hideVerboseItems (i, Incomplete x) = (i, Incomplete $ x{tMetadata=map hideOrigin $ tMetadata x})
@@ -122,14 +122,14 @@ hideOrigin :: Metadata -> Metadata
 hideOrigin (MetadataTag (TagOrigin (Link l))) = MetadataTag $ TagOrigin $ Link "hidden"
 hideOrigin x = x
 
-chunkize :: Todo TodoItem -> Chunk String
-chunkize (Completed i) = chunk (show i) & fore grey
+chunkize :: Todo TodoItem -> Chunk
+chunkize (Completed i) = chunk (T.pack $ show i) & fore grey
 chunkize (Incomplete i) = case (tPriority i) of
-  Just A  -> chunk (show i) & fore red
-  Just B  -> chunk (show i) & fore yellow
-  Just C  -> chunk (show i) & fore green
-  Just _  -> chunk (show i) & fore cyan
-  Nothing -> chunk (show i)
+  Just A  -> chunk (T.pack $ show i) & fore red
+  Just B  -> chunk (T.pack $ show i) & fore yellow
+  Just C  -> chunk (T.pack $ show i) & fore green
+  Just _  -> chunk (T.pack $ show i) & fore cyan
+  Nothing -> chunk (T.pack $ show i)
 
 colorPrintChunks = mapM_ BS.putStr . chunksToByteStrings toByteStringsColors256
 

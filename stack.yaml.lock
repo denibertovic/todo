@@ -5,43 +5,19 @@
 
 packages:
 - completed:
-    cabal-file:
-      size: 3135
-      sha256: 3ca69a48d374a26678b2da61b96d9ea8aba8b57d96a1b726aa1a5331fc3000a0
+    commit: 5529bffe259b0e59f5116850925dd4b1a436f945
+    git: https://github.com/denibertovic/forge.git
     name: forge
-    version: 0.3.1.0
-    git: https://github.com/denibertovic/forge.git
     pantry-tree:
-      size: 1496
       sha256: 0ee0441df7f510d5ed89fcbc3a059db7f14e05dcf63ffa4d08eed7535aede3d0
-    commit: 5529bffe259b0e59f5116850925dd4b1a436f945
+      size: 1496
+    version: 0.3.1.0
   original:
+    commit: 5529bffe259b0e59f5116850925dd4b1a436f945
     git: https://github.com/denibertovic/forge.git
-    commit: 5529bffe259b0e59f5116850925dd4b1a436f945
-- completed:
-    hackage: rio-0.1.2.0@sha256:cb2a65cee1c0450815002ca890633215e4544b5c1c9f7091a950142c6efe8f3f,3238
-    pantry-tree:
-      size: 3745
-      sha256: 5014f5fd8dd06d16ecefefeef20d9f9ba58e8c4d1289a243edd9da81eeefcb24
-  original:
-    hackage: rio-0.1.2.0
-- completed:
-    hackage: tar-conduit-0.3.0@sha256:c220b7a74b986445d08706aed77f17f82807d0133a5f3a760f53d587d20865b2,2928
-    pantry-tree:
-      size: 764
-      sha256: d92211dfc13c8cc768a0deeb6df8500f92a456ddb5d04d57a60efd18d335c82d
-  original:
-    hackage: tar-conduit-0.3.0
-- completed:
-    hackage: optparse-applicative-0.16.1.0@sha256:d410cc76e288b93d4ee7e06addc0381a7eaea43bcee0c3ced03f05cadec2f2fc,4836
-    pantry-tree:
-      size: 2979
-      sha256: bfff15197c553035578163cd3da352bcddcf0f11f57ae40ead22ef6dd120c40c
-  original:
-    hackage: optparse-applicative-0.16.1.0
 snapshots:
 - completed:
-    size: 507344
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/11/5.yaml
-    sha256: a95cf9e057426149f3f69054edb3b62630d8ac39e38b34cd6035b769ca3085f9
-  original: lts-11.5
+    sha256: 428ec8d5ce932190d3cbe266b9eb3c175cd81e984babf876b64019e2cbe4ea68
+    size: 590100
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/18/28.yaml
+  original: lts-18.28

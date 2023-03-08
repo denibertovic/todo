@@ -70,6 +70,7 @@ tests:
   todo-test:
     main:                Main.hs
     source-dirs:         test
+    build-tools: hspec-discover:hspec-discover
     ghc-options:
     - -threaded
     - -rtsopts
