@@ -1,28 +1,36 @@
-.PHONY: build repl test release help nix-build
+.PHONY: build repl test release help static nix-build ghcid ghcid-test
 
 .DEFAULT_GOAL = help
 
 VERSION ?= $(shell grep "^version:" todo.cabal | cut -d " " -f9)
 
-## Run build
+## Build project
 build:
-	@stack build
+	@cabal build
 
-## Run nix build
+## Build project with nix
 nix-build:
-	@nix-build -E 'with import <nixpkgs> { }; callPackage ./default.nix { }' -A todo.components.exes.todo
-
-## Run repl
-repl:
-	@stack repl
+	@nix build
 
 ## Run tests
 test:
-	@stack test
+	@cabal test
+
+## Build static binary with nix
+static:
+	@nix-build --no-link -A static_package static.nix
 
 ## Cut new release
 release:
 	@git tag ${VERSION} && git push --tags
+
+## Run ghcid
+ghcid:
+	@ghcid --command "cabal repl lib:todo"
+
+## Have ghcid run the test suite on successful recompile
+ghcid-test:
+	@ghcid --command "cabal repl test:todo-test" --test "main"
 
 ## Print current version
 version:
@@ -30,8 +38,9 @@ version:
 
 ## Show help screen.
 help:
-	@echo "Please use \`make <target>' where <target> is one of\n\n"
-	@awk '/^[a-zA-Z\-\_0-9]+:/ { \
+	@echo "Please use \`make <target>' where <target> is one of:"
+	@echo
+	@awk '/^[a-zA-Z\-0-9_]+:/ { \
 		helpMessage = match(lastLine, /^## (.*)/); \
 		if (helpMessage) { \
 			helpCommand = substr($$1, 0, index($$1, ":")-1); \
@@ -40,4 +49,3 @@ help:
 		} \
 	} \
 	{ lastLine = $$0 }' $(MAKEFILE_LIST)
-

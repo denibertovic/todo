@@ -1,4 +1,5 @@
 .stack-work/
-todo.cabal
 *~
-result*
+/result
+/.devenv*
+/dist-newstyle

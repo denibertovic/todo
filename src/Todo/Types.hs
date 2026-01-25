@@ -9,9 +9,9 @@ import           RIO
 import           Data.Aeson          (FromJSON, Value (..), parseJSON, (.:), (.:?))
 import qualified Data.Aeson          as JSON
 import qualified Data.Aeson.Types    as JSON
-import qualified Data.HashMap.Strict as HM
+import qualified Data.Aeson.Key      as Key
+import qualified Data.Aeson.KeyMap   as KM
 import qualified Data.Text           as T
-import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector         as V
 import           Data.Time.Calendar  (Day (..))
 import           Data.Time.Clock     (UTCTime)
@@ -49,9 +49,10 @@ data Ignore = IgnoreEntireGroup RemoteGroup
 
 instance FromJSON AddContext where
   parseJSON (JSON.Object o) = do
-    let ((k,v):_) = HM.toList o
+    let ((k,v):_) = KM.toList o
+    let k' = Key.toText k
     v' <- parseJSON v
-    case (T.splitOn "/" k) of
+    case (T.splitOn "/" k') of
       [g, p] -> case p of
                   "*" -> return $ AddToEntireGroup (RemoteGroup g) v'
                   "" -> fail addContextErrMsg

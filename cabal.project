@@ -1,0 +1,13 @@
+packages: .
+
+source-repository-package
+  type: git
+  location: https://github.com/denibertovic/forge.git
+  tag: 3c7b2faceb99f81af8028bdc5b03c610666b8e0a
+
+-- Allow newer versions of base for GHC 9.10
+allow-newer:
+  base
+
+-- Index state for reproducibility
+index-state: 2026-01-24T10:07:06Z
