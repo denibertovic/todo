@@ -2,7 +2,7 @@
   description = "Todo - A CLI todo list manager";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     flake-utils.url = "github:numtide/flake-utils";
     forge = {
       url = "github:denibertovic/forge";
@@ -10,9 +10,14 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, forge }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
+  outputs = {
+    self,
+    nixpkgs,
+    flake-utils,
+    forge,
+  }:
+    flake-utils.lib.eachDefaultSystem (
+      system: let
         pkgs = nixpkgs.legacyPackages.${system};
 
         haskellPackages = pkgs.haskellPackages.override {
@@ -22,7 +27,6 @@
         };
 
         todo = haskellPackages.callCabal2nix "todo" ./. {};
-
       in {
         packages = {
           default = todo;
@@ -35,7 +39,7 @@
         };
 
         devShells.default = haskellPackages.shellFor {
-          packages = p: [ todo ];
+          packages = p: [todo];
           buildInputs = with pkgs; [
             haskellPackages.cabal-install
             haskellPackages.haskell-language-server
