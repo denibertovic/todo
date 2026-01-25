@@ -5,6 +5,7 @@
 module Todo.Types where
 
 import           RIO
+import           Data.Char           (chr, ord)
 
 import           Data.Aeson          (FromJSON, Value (..), parseJSON, (.:), (.:?))
 import qualified Data.Aeson          as JSON
@@ -191,15 +192,12 @@ instance Show Metadata where
 instance {-# OVERLAPPING #-} Show [Metadata] where
   show xs = concat $ map ((<>) space) $ map show xs
 
-data Priority = A | B | C | D | E | F deriving (Eq, Read)
+data Priority = A | B | C | D | E | F | G | H | I | J | K | L | M
+              | N | O | P | Q | R | S | T | U | V | W | X | Y | Z
+              deriving (Eq, Read, Enum)
 
 instance Show Priority where
-  show A = "(" <> "A" <> ")"
-  show B = "(" <> "B" <> ")"
-  show C = "(" <> "C" <> ")"
-  show D = "(" <> "D" <> ")"
-  show E = "(" <> "E" <> ")"
-  show F = "(" <> "F" <> ")"
+  show p = "(" <> [chr (ord 'A' + fromEnum p)] <> ")"
 
 instance Ord Priority where
   compare a b = compare (show a) (show b)
@@ -208,15 +206,15 @@ data TodoItem  = TodoItem { tPriority    :: Maybe Priority
                           , tDescription :: T.Text
                           , tMetadata    :: [Metadata]
                           , tCreatedAt   :: Maybe Day
-                          , tDoneAt      :: Maybe Day
+                          , tCompletedAt :: Maybe Day
                           } deriving (Eq)
 
 instance Show TodoItem where
-  show (TodoItem pri desc metadata createdAt doneAt) = (maybe "" (flip (<>) space . show) pri)
-                                                     <> (maybe "" (flip (<>) space . show) createdAt)
-                                                     <> (maybe "" (flip (<>) space . show) doneAt)
-                                                     <> T.unpack desc
-                                                     <> (show metadata)
+  show (TodoItem pri desc metadata createdAt _completedAt) =
+    (maybe "" (flip (<>) space . show) pri)
+    <> (maybe "" (flip (<>) space . show) createdAt)
+    <> T.unpack desc
+    <> (show metadata)
 
 space = " " :: String
 
@@ -249,7 +247,12 @@ instance {-# OVERLAPPING #-} Ord (Int, Todo TodoItem) where
   compare (_, t1) (_, t2) = compare t1 t2
 
 instance Show (Todo TodoItem) where
-  show (Completed i)  = "x" <> space <> (show i)
+  show (Completed i)  = "x" <> space
+                        <> (maybe "" (flip (<>) space . show) (tPriority i))
+                        <> (maybe "" (flip (<>) space . show) (tCompletedAt i))
+                        <> (maybe "" (flip (<>) space . show) (tCreatedAt i))
+                        <> T.unpack (tDescription i)
+                        <> (show (tMetadata i))
   show (Incomplete i) = show i
 
 instance {-# OVERLAPPING #-} Show [Todo TodoItem] where

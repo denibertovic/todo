@@ -21,6 +21,12 @@ spec =
       it "Matches (A) as Priority A" $
         parse priority "" "(A)" `shouldBe` Right A
 
+      it "Matches (G) as Priority G" $
+        parse priority "" "(G)" `shouldBe` Right G
+
+      it "Matches (Z) as Priority Z" $
+        parse priority "" "(Z)" `shouldBe` Right Z
+
       it "Doesn't match A as Priority A" $
         parse priority "" "A" `shouldNotBe` Right A
 
@@ -89,7 +95,22 @@ spec =
       it "Matches Url as Text in Item" $
         parse incompleteTask "" sampleTodoWithUrlRaw `shouldBe` Right sampleTodoWithUrl
 
+    describe "Incomplete task with creation date" $ do
+      it "Parses creation date correctly" $
+        parse incompleteTask "" "(A) 2024-03-15 Call Mom" `shouldBe` Right sampleTodoWithCreationDate
 
+    describe "Completed task" $ do
+      it "Parses completed task with completion date only" $
+        parse completedTask "" "x 2024-03-16 Call Mom" `shouldBe` Right sampleCompletedWithCompletionDate
+
+      it "Parses completed task with both dates" $
+        parse completedTask "" "x 2024-03-16 2024-03-15 Call Mom" `shouldBe` Right sampleCompletedWithBothDates
+
+      it "Parses completed task with priority and both dates" $
+        parse completedTask "" "x (A) 2024-03-16 2024-03-15 Call Mom" `shouldBe` Right sampleCompletedWithPriorityAndDates
+
+      it "Parses completed task with all elements correctly" $
+        parse completedTask "" "x (A) 2024-03-16 2024-03-15 Call Mom +project @context" `shouldBe` Right sampleCompletedFullTask
 
 sampleTodoRaw = "+project @context foo bar @context2 +project2"
 sampleTodoWithPriRaw = "(A) +project @context foo bar @context2 +project2"
@@ -110,7 +131,7 @@ sampleMetadata = [ MetadataProject $ Project "project"
 sampleTodo = Incomplete TodoItem { tDescription="foo bar"
                                  , tPriority=Nothing
                                  , tCreatedAt=Nothing
-                                 , tDoneAt=Nothing
+                                 , tCompletedAt=Nothing
                                  , tMetadata=[ MetadataProject $ Project "project"
                                              , MetadataContext $ Context "context"
                                              , MetadataContext $ Context "context2"
@@ -121,7 +142,7 @@ sampleTodo = Incomplete TodoItem { tDescription="foo bar"
 sampleTodoPriA = Incomplete TodoItem { tDescription="foo bar"
                                  , tPriority=Just A
                                  , tCreatedAt=Nothing
-                                 , tDoneAt=Nothing
+                                 , tCompletedAt=Nothing
                                  , tMetadata=[ MetadataProject $ Project "project"
                                              , MetadataContext $ Context "context"
                                              , MetadataContext $ Context "context2"
@@ -132,7 +153,7 @@ sampleTodoPriA = Incomplete TodoItem { tDescription="foo bar"
 sampleTodoPriAWithTags = Incomplete TodoItem { tDescription="foo bar"
                                  , tPriority=Just A
                                  , tCreatedAt=Nothing
-                                 , tDoneAt=Nothing
+                                 , tCompletedAt=Nothing
                                  , tMetadata=[ MetadataProject $ Project "project"
                                              , MetadataContext $ Context "context"
                                              , MetadataContext $ Context "context2"
@@ -144,7 +165,7 @@ sampleTodoPriAWithTags = Incomplete TodoItem { tDescription="foo bar"
 sampleTodoPriAWithDue = Incomplete TodoItem { tDescription="foo bar"
                                  , tPriority=Just A
                                  , tCreatedAt=Nothing
-                                 , tDoneAt=Nothing
+                                 , tCompletedAt=Nothing
                                  , tMetadata=[ MetadataProject $ Project "project"
                                              , MetadataContext $ Context "context"
                                              , MetadataContext $ Context "context2"
@@ -156,7 +177,7 @@ sampleTodoPriAWithDue = Incomplete TodoItem { tDescription="foo bar"
 sampleTodoPriAWithDueNext = Incomplete TodoItem { tDescription="foo bar"
                                  , tPriority=Just A
                                  , tCreatedAt=Nothing
-                                 , tDoneAt=Nothing
+                                 , tCompletedAt=Nothing
                                  , tMetadata=[ MetadataProject $ Project "project"
                                              , MetadataContext $ Context "context"
                                              , MetadataContext $ Context "context2"
@@ -168,6 +189,48 @@ sampleTodoPriAWithDueNext = Incomplete TodoItem { tDescription="foo bar"
 sampleTodoWithUrl = Incomplete TodoItem { tDescription=T.strip $ sampleTodoWithUrlRaw
                                  , tPriority=Nothing
                                  , tCreatedAt=Nothing
-                                 , tDoneAt=Nothing
+                                 , tCompletedAt=Nothing
                                  , tMetadata=[]
+                                 }
+
+-- Incomplete task with creation date
+sampleTodoWithCreationDate = Incomplete TodoItem { tDescription="Call Mom"
+                                 , tPriority=Just A
+                                 , tCreatedAt=Just (fromGregorian 2024 3 15)
+                                 , tCompletedAt=Nothing
+                                 , tMetadata=[]
+                                 }
+
+-- Completed task with completion date only
+sampleCompletedWithCompletionDate = Completed TodoItem { tDescription="Call Mom"
+                                 , tPriority=Nothing
+                                 , tCreatedAt=Nothing
+                                 , tCompletedAt=Just (fromGregorian 2024 3 16)
+                                 , tMetadata=[]
+                                 }
+
+-- Completed task with both dates
+sampleCompletedWithBothDates = Completed TodoItem { tDescription="Call Mom"
+                                 , tPriority=Nothing
+                                 , tCreatedAt=Just (fromGregorian 2024 3 15)
+                                 , tCompletedAt=Just (fromGregorian 2024 3 16)
+                                 , tMetadata=[]
+                                 }
+
+-- Completed task with priority and both dates
+sampleCompletedWithPriorityAndDates = Completed TodoItem { tDescription="Call Mom"
+                                 , tPriority=Just A
+                                 , tCreatedAt=Just (fromGregorian 2024 3 15)
+                                 , tCompletedAt=Just (fromGregorian 2024 3 16)
+                                 , tMetadata=[]
+                                 }
+
+-- Completed task with all elements: priority, both dates, description, project, context
+sampleCompletedFullTask = Completed TodoItem { tDescription="Call Mom"
+                                 , tPriority=Just A
+                                 , tCreatedAt=Just (fromGregorian 2024 3 15)
+                                 , tCompletedAt=Just (fromGregorian 2024 3 16)
+                                 , tMetadata=[ MetadataProject $ Project "project"
+                                             , MetadataContext $ Context "context"
+                                             ]
                                  }

@@ -1,7 +1,7 @@
 cabal-version: 2.4
 
 name:           todo
-version:        0.2.0.0
+version:        0.3.0.0
 description:    Please see the README on Github at <https://github.com/denibertovic/todo#readme>
 homepage:       https://github.com/denibertovic/todo#readme
 bug-reports:    https://github.com/denibertovic/todo/issues

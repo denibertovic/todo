@@ -162,13 +162,20 @@ completeTodo nums = do
   now <- liftIO $ getCurrentTime
   let nowDay = utctDay now
   c <- liftIO $ TIO.readFile t
-  -- TODO: Add completion date
   let (filtered, rest) = filterTodoLines nums $ T.lines c
-  let filtered' = map (\x -> "x " <> x ) $ filtered
+  -- Parse each task, set completion date, and convert to Completed
+  completedTasks <- liftIO $ mapM (completeTask nowDay) filtered
+  let filtered' = map (T.pack . show) completedTasks
   liftIO $ appendTodoLines d filtered'
   liftIO $ writeTodoLines t rest
   liftIO $ putStrLn $ "Completed items:"
   liftIO $ putStrLn $ T.unpack $ concatTodoLines filtered'
+  where
+    completeTask day line = do
+      todo <- parseItemOrDie line
+      case todo of
+        Incomplete item -> return $ Completed $ item { tCompletedAt = Just day }
+        Completed item  -> return $ Completed $ item { tCompletedAt = Just day }
 
 deleteTodo :: (HasLogFunc env, HasConfig env) => [Int] -> RIO env ()
 deleteTodo nums = do
@@ -254,7 +261,7 @@ mkTodoFromRemoteTodo t =
         , MetadataTag $ TagOrigin $ url2link $ remoteUrl t
         ]
     , tCreatedAt = Nothing
-    , tDoneAt = Nothing
+    , tCompletedAt = Nothing
     }
 
 url2link :: ForgeTypes.Url -> Link

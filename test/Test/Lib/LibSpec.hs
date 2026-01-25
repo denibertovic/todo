@@ -34,6 +34,15 @@ spec =
         content <- TIO.readFile (todoFile $ app ^. configL)
         (last $ T.lines content) == (getTodo 5 testTodoTxtLines) `shouldBe` True
 
+    it "Tests completing a todo adds completion date" $ do
+      withTempTodo $ \app -> do
+        runRIO app $ completeTodo [3]  -- "Third Baz baz:dinamo"
+        doneContent <- TIO.readFile (todoDoneFile $ app ^. configL)
+        let doneLine = last $ T.lines doneContent
+        -- Verify format: "x YYYY-MM-DD Third Baz baz:dinamo"
+        T.isPrefixOf "x 20" doneLine `shouldBe` True  -- starts with x and date (20xx)
+        T.isInfixOf "Third Baz" doneLine `shouldBe` True
+
     it "Tests deleting a todo" $ do
       withTempTodo $ \app -> do
         runRIO app $ deleteTodo [1]
@@ -86,7 +95,7 @@ testTodoTxtLines = [ "(A) First Foo @context"
                    , "(B) Second Bar +project @context"
                    , "Third Baz baz:dinamo"
                    , "Test origin bla origin:https://github.com/foo/bar/issue/1"
-                   , "x Some todo that's done"
+                   , "x 2024-01-15 2024-01-10 Some todo that's done"
                    ]
 
 -- | Helper function so we don't confused 0 based and 1 based indexes

@@ -158,7 +158,7 @@ incompleteTask = do
     return $ Incomplete TodoItem { tDescription=T.intercalate " " desc
                                  , tPriority=pri
                                  , tCreatedAt=startDate
-                                 , tDoneAt=endDate
+                                 , tCompletedAt=endDate
                                  , tMetadata=m''}
   where getIt (MetadataString s)      = s
         getIt (MetadataLink (Link s)) = s
@@ -175,15 +175,31 @@ isMetadataStringOrLink m = case m of
   otherwise        -> False
 
 -- | Complete Task
--- It is assumed that a completed task starts with x and a optional completion
--- date. It is also assumed that the rest of the string will be an incomplete
--- task.
+-- Per the todo.txt spec, completed tasks have format:
+--   x [(priority)] completion-date [creation-date] description
+-- Example: x (A) 2024-03-16 2024-03-15 Call Mom
 completedTask :: Parser (Todo TodoItem)
 completedTask = do
   _ <- char 'x'
   _ <- sc
-  (Incomplete item) <- incompleteTask
-  return $ Completed item
+  pri <- optionMaybe priority
+  _ <- sc
+  completionDate <- optionMaybe date
+  _ <- sc
+  creationDate <- optionMaybe date
+  _ <- sc
+  m <- many1 metadata
+  _ <- pleaseNoMore
+  let m' = filter (isMetadataStringOrLink) m
+  let desc = [ getIt x | x <- m']
+  let m'' = filter (not . isMetadataStringOrLink) m
+  return $ Completed TodoItem { tDescription=T.intercalate " " desc
+                              , tPriority=pri
+                              , tCreatedAt=creationDate
+                              , tCompletedAt=completionDate
+                              , tMetadata=m''}
+  where getIt (MetadataString s)      = s
+        getIt (MetadataLink (Link s)) = s
 
 todoItem :: Parser (Todo TodoItem)
 todoItem = choice [ completedTask, incompleteTask ]
