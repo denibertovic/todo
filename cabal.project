@@ -1,4 +1,6 @@
-packages: .
+packages:
+  .
+  todo-sync-server
 
 tests: True
 

@@ -27,10 +27,12 @@
         };
 
         todo = haskellPackages.callCabal2nix "todo" ./. {};
+        todo-sync-server = haskellPackages.callCabal2nix "todo-sync-server" ./todo-sync-server {};
       in {
         packages = {
           default = todo;
           todo = todo;
+          todo-sync-server = todo-sync-server;
         };
 
         apps.default = flake-utils.lib.mkApp {
@@ -39,7 +41,7 @@
         };
 
         devShells.default = haskellPackages.shellFor {
-          packages = p: [todo];
+          packages = p: [todo todo-sync-server];
           buildInputs = with pkgs; [
             haskellPackages.cabal-install
             haskellPackages.haskell-language-server

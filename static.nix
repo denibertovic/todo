@@ -38,6 +38,7 @@ let
         overrides = final.lib.composeExtensions (old.overrides or (_: _: {})) (self: super: {
           forge = self.callCabal2nix "forge" forge-src {};
           todo = self.callCabal2nix "todo" ./. {};
+          todo-sync-server = self.callCabal2nix "todo-sync-server" ./todo-sync-server {};
         });
       });
     };
@@ -51,6 +52,7 @@ let
   };
 
   static_package = survey_output.haskellPackages.todo;
+  static_sync_server = survey_output.haskellPackages.todo-sync-server;
 
   # Build script
   fullBuildScript = normalPkgs.writeShellScript "build-static-todo.sh" ''
@@ -62,6 +64,7 @@ let
 in
 {
   inherit static_package;
+  inherit static_sync_server;
   inherit fullBuildScript;
   inherit survey_output;
   shell = static_package.env;

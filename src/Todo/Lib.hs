@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Todo.Lib where
@@ -7,16 +8,21 @@ import           Prelude            (print, putStrLn, (!!))
 import           RIO
 import qualified RIO.Text as T
 
-import           Control.Monad      (when)
+import qualified Control.Concurrent as CC
+import           Control.Monad      (when, forever)
 import           Control.Monad      (forM)
 import qualified Data.ByteString    as BS
 import           Data.Either        (isRight)
 import           Data.List          (nubBy, sort)
+import qualified Data.Map.Strict    as Map
 import           Data.Maybe         (catMaybes)
 import qualified Data.List.Index    as LX
 import qualified Data.Text          as T
 import qualified Data.Text.IO       as TIO
 import           Data.Time.Clock    (UTCTime (..), getCurrentTime)
+import           Data.Aeson          (Value(..), object, (.=))
+import qualified Data.Aeson.Key     as Key
+import qualified Data.Aeson.KeyMap  as KM
 import           Data.Yaml          (decodeFileEither)
 import qualified Data.Yaml          as Y
 import           Rainbow            hiding ((<>))
@@ -36,6 +42,15 @@ import qualified Forge.Utils        as ForgeUtils
 import           Todo.Options
 import           Todo.Parser
 import           Todo.Types
+import           Todo.Sync.Types    (SyncRequest(..), SyncResponse(..), RegisterResponse(..),
+                                     SyncState(..), DeviceId, generateDeviceId)
+import           Todo.Sync.CRDT     (applyOperations, materializeToTodos, mergeOperations,
+                                     materialize)
+import           Todo.Sync.Store    (loadSyncState, saveSyncState, initSyncState,
+                                     migrateExistingTodos, getSyncDir, ensureSyncDir)
+import           Todo.Sync.Client   (syncWithServer, registerDevice, checkServerHealth,
+                                     SyncError(..))
+import           Todo.Sync.Daemon   (startSyncDaemon, stopSyncDaemon, performSync)
 
 decodeConfig :: FilePath -> IO (Either Y.ParseException TodoConfig)
 decodeConfig p = Y.decodeFileEither p
@@ -53,12 +68,13 @@ entrypoint :: TodoOpts -> IO ()
 entrypoint (TodoOpts configPath debug verbose cmd) = do
   h <- getHomeDirectory
   let defaultConfig = h </> ".todo.yaml"
-  c <- readConfig $ maybe defaultConfig id configPath
+      cfgPath = maybe defaultConfig id configPath
+  c <- readConfig cfgPath
   let t = todoFile c
   let d = todoDir c </> "done.txt"
   lo <- logOptionsHandle stderr debug
   withLogFunc lo $ \l -> do
-    let app = App { appConfig=c, appLogger=l }
+    let app = App { appConfig=c, appLogger=l, appConfigPath=cfgPath }
     case cmd of
       ListTodos filter     -> runRIO app $ listTodos filter verbose
       AddTodo l            -> runRIO app $ addTodo l
@@ -68,6 +84,13 @@ entrypoint (TodoOpts configPath debug verbose cmd) = do
       DeletePriority line  -> runRIO app $ deletePriority line
       PullRemotes rs       -> runRIO app $ pullRemotes rs
       Archive              -> runRIO app $ archiveTodos
+      -- Sync commands
+      SyncInit serverUrl inviteCode -> runRIO app $ syncInit serverUrl inviteCode
+      SyncStatus           -> runRIO app $ syncStatus
+      SyncNow              -> runRIO app $ syncNow
+      SyncEnable           -> runRIO app $ syncSetEnabled True
+      SyncDisable          -> runRIO app $ syncSetEnabled False
+      SyncDaemon           -> runRIO app $ runSyncDaemon
 
 isProject :: String -> Bool
 isProject (x:xs) = case x of
@@ -374,3 +397,190 @@ backupFile :: FilePath -> IO ()
 backupFile p = do
   exists <- doesFileExist p
   when exists (copyFile p (p <> ".bak"))
+
+-- Sync Commands Implementation
+
+-- | Initialize sync with a server
+syncInit :: (HasLogFunc env, HasConfig env, HasConfigPath env) => T.Text -> T.Text -> RIO env ()
+syncInit serverUrl inviteCode = do
+  env <- ask
+  let c = env ^. configL
+      cfgPath = env ^. configPathL
+      dir = todoDir c
+      todoPath = todoFile c
+
+  liftIO $ putStrLn $ "Initializing sync with server: " <> T.unpack serverUrl
+
+  -- Check server health first
+  liftIO $ putStrLn "Checking server health..."
+  healthResult <- liftIO $ checkServerHealth serverUrl
+  case healthResult of
+    Left err -> liftIO $ die $ "Failed to connect to server: " <> show err
+    Right _  -> liftIO $ putStrLn "Server is healthy."
+
+  -- Register device with invite code
+  liftIO $ putStrLn "Registering device..."
+  let deviceName = syncDeviceName $ todoSync c
+  regResult <- liftIO $ registerDevice serverUrl deviceName inviteCode
+  case regResult of
+    Left err -> liftIO $ die $ "Failed to register device: " <> show err
+    Right RegisterResponse{..} -> do
+      liftIO $ putStrLn $ "Device registered with ID: " <> show rresDeviceId
+
+      -- Update config file with sync settings
+      liftIO $ putStrLn "Updating config file..."
+      liftIO $ updateConfigWithSync cfgPath serverUrl deviceName rresAuthToken
+
+      -- Initialize sync state
+      liftIO $ ensureSyncDir dir
+      state <- liftIO $ initSyncState dir deviceName
+
+      -- Migrate existing todos
+      exists <- liftIO $ doesFileExist todoPath
+      when exists $ do
+        content <- liftIO $ TIO.readFile todoPath
+        todos <- liftIO $ parseOrDie todoPath content
+        liftIO $ putStrLn $ "Migrating " <> show (length todos) <> " existing todos..."
+        void $ liftIO $ migrateExistingTodos dir (ssDeviceId state) todos
+
+      liftIO $ putStrLn "Sync initialized successfully!"
+      liftIO $ putStrLn $ "Config updated: " <> cfgPath
+
+-- | Update the config file with sync settings
+updateConfigWithSync :: FilePath -> T.Text -> T.Text -> T.Text -> IO ()
+updateConfigWithSync cfgPath serverUrl deviceName authToken = do
+  -- Read existing config as raw YAML Value
+  result <- Y.decodeFileEither cfgPath :: IO (Either Y.ParseException Value)
+  case result of
+    Left err -> die $ "Failed to parse config file: " <> show err
+    Right (Object obj) -> do
+      -- Create the new sync section as a Value
+      let syncValue = object
+            [ "enabled"               .= True
+            , "server_url"            .= serverUrl
+            , "device_name"           .= deviceName
+            , "sync_interval_seconds" .= (300 :: Int)
+            , "auth_token"            .= authToken
+            ]
+          -- Update the object with the new sync section
+          updatedObj = KM.insert (Key.fromText "sync") syncValue obj
+      -- Write back to file
+      Y.encodeFile cfgPath (Object updatedObj)
+    Right _ -> die "Config file is not a valid YAML object"
+
+-- | Show sync status
+syncStatus :: (HasLogFunc env, HasConfig env) => RIO env ()
+syncStatus = do
+  env <- ask
+  let c = env ^. configL
+      dir = todoDir c
+      syncCfg = todoSync c
+
+  liftIO $ putStrLn "Sync Status"
+  liftIO $ putStrLn "==========="
+  liftIO $ putStrLn $ "Enabled:      " <> show (syncEnabled syncCfg)
+  liftIO $ putStrLn $ "Server URL:   " <> T.unpack (syncServerUrl syncCfg)
+  liftIO $ putStrLn $ "Device name:  " <> T.unpack (syncDeviceName syncCfg)
+  liftIO $ putStrLn $ "Interval:     " <> show (syncIntervalSecs syncCfg) <> " seconds"
+
+  -- Load sync state
+  maybeState <- liftIO $ loadSyncState dir
+  case maybeState of
+    Nothing -> liftIO $ putStrLn "Sync state:   Not initialized"
+    Just state -> do
+      liftIO $ putStrLn $ "Device ID:    " <> show (ssDeviceId state)
+      liftIO $ putStrLn $ "Last sync:    " <> maybe "Never" show (ssLastSync state)
+      liftIO $ putStrLn $ "Pending ops:  " <> show (length $ ssPendingOps state)
+      liftIO $ putStrLn $ "Total ops:    " <> show (length $ ssOperations state)
+      liftIO $ putStrLn $ "Items:        " <> show (Map.size $ ssItems state)
+
+  -- Check server health if enabled
+  when (syncEnabled syncCfg) $ do
+    liftIO $ putStrLn ""
+    liftIO $ putStrLn "Checking server..."
+    healthResult <- liftIO $ checkServerHealth (syncServerUrl syncCfg)
+    case healthResult of
+      Left err -> liftIO $ putStrLn $ "Server status: Unreachable (" <> show err <> ")"
+      Right _  -> liftIO $ putStrLn "Server status: Healthy"
+
+-- | Perform a sync now
+syncNow :: (HasLogFunc env, HasConfig env) => RIO env ()
+syncNow = do
+  env <- ask
+  let c = env ^. configL
+      dir = todoDir c
+      syncCfg = todoSync c
+
+  unless (syncEnabled syncCfg) $ liftIO $ die "Sync is not enabled. Use 'todo sync init' first."
+
+  -- Load sync state
+  maybeState <- liftIO $ loadSyncState dir
+  case maybeState of
+    Nothing -> liftIO $ die "Sync not initialized. Use 'todo sync init' first."
+    Just state -> do
+      liftIO $ putStrLn "Syncing..."
+
+      -- Build sync request
+      let pendingOps = ssPendingOps state
+          syncReq = SyncRequest
+            { srDeviceId   = ssDeviceId state
+            , srLastSync   = ssLastSync state
+            , srOperations = pendingOps
+            , srAuthToken  = syncAuthToken syncCfg
+            }
+
+      -- Perform sync
+      result <- liftIO $ syncWithServer (syncServerUrl syncCfg) (syncAuthToken syncCfg) syncReq
+      case result of
+        Left err -> liftIO $ die $ "Sync failed: " <> show err
+        Right SyncResponse{..} -> do
+          -- Merge operations
+          let mergedOps = mergeOperations (ssOperations state) sresOperations
+              newItems = materialize (ssDeviceId state) mergedOps
+              newState = state
+                { ssOperations = mergedOps
+                , ssLastSync   = Just sresSyncTime
+                , ssPendingOps = []
+                , ssItems      = newItems
+                }
+
+          -- Save state
+          liftIO $ saveSyncState dir newState
+
+          -- Write updated todos to file
+          let todos = materializeToTodos newItems
+          liftIO $ backupFile (todoFile c)
+          liftIO $ TIO.writeFile (todoFile c) $ T.pack $ show todos
+
+          liftIO $ putStrLn $ "Sync complete!"
+          liftIO $ putStrLn $ "  Sent:     " <> show (length pendingOps) <> " operations"
+          liftIO $ putStrLn $ "  Received: " <> show (length sresOperations) <> " operations"
+          liftIO $ putStrLn $ "  Items:    " <> show (Map.size newItems)
+
+-- | Enable or disable sync
+syncSetEnabled :: (HasLogFunc env, HasConfig env) => Bool -> RIO env ()
+syncSetEnabled enabled = do
+  liftIO $ putStrLn $ if enabled
+    then "To enable sync, add 'enabled: true' to the sync section of your config file."
+    else "To disable sync, set 'enabled: false' in the sync section of your config file."
+  liftIO $ putStrLn "Configuration file location: ~/.todo.yaml"
+
+-- | Run the sync daemon
+runSyncDaemon :: (HasLogFunc env, HasConfig env) => RIO env ()
+runSyncDaemon = do
+  env <- ask
+  let c = env ^. configL
+      syncCfg = todoSync c
+
+  unless (syncEnabled syncCfg) $ liftIO $ die "Sync is not enabled. Configure sync first."
+
+  liftIO $ putStrLn "Starting sync daemon..."
+  liftIO $ putStrLn $ "  Watching:  " <> todoDir c
+  liftIO $ putStrLn $ "  Interval:  " <> show (syncIntervalSecs syncCfg) <> " seconds"
+  liftIO $ putStrLn "Press Ctrl+C to stop."
+  liftIO $ putStrLn ""
+
+  daemon <- liftIO $ startSyncDaemon c
+
+  -- Keep running until interrupted
+  liftIO $ forever $ CC.threadDelay 1000000

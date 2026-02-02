@@ -16,6 +16,7 @@ in {
     pkgs.aws-vault
     pkgs.kubernetes-helm
     pkgs.openssl
+    pkgs.sqlite
   ];
 
   # https://devenv.sh/scripts/

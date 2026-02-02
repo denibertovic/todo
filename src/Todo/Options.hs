@@ -22,6 +22,13 @@ data TodoCommand = AddTodo T.Text
                  | DeletePriority Int
                  | PullRemotes [T.Text]
                  | Archive
+                 -- Sync commands
+                 | SyncInit T.Text T.Text  -- "todo sync init <server-url> --invite-code <code>"
+                 | SyncStatus              -- "todo sync status"
+                 | SyncNow               -- "todo sync"
+                 | SyncEnable            -- "todo sync enable"
+                 | SyncDisable           -- "todo sync disable"
+                 | SyncDaemon            -- "todo sync daemon"
                  deriving (Eq, Show)
 
 data TodoOpts = TodoOpts {
@@ -58,6 +65,7 @@ todoCmds env = subparser (  cmdList env
                          <> cmdDeletePriority env
                          <> cmdPullRemotes env
                          <> cmdArchive env
+                         <> cmdSync env
                          )
 
 cmdList env = command "ls" infos
@@ -99,6 +107,29 @@ cmdArchive env = command "archive" infos
     where infos = info (options <**> helper) desc
           desc = progDesc "Moves all done tasks from todo.txt to done.txt"
           options = pure Archive
+
+cmdSync env = command "sync" infos
+    where infos = info (options <**> helper) desc
+          desc = progDesc "Sync todos with remote server"
+          options = syncSubcommands <|> pure SyncNow
+
+syncSubcommands :: Parser TodoCommand
+syncSubcommands = subparser
+  (  command "init" (info syncInitOpts (progDesc "Initialize sync with a server"))
+  <> command "status" (info (pure SyncStatus) (progDesc "Show sync status"))
+  <> command "enable" (info (pure SyncEnable) (progDesc "Enable automatic sync"))
+  <> command "disable" (info (pure SyncDisable) (progDesc "Disable automatic sync"))
+  <> command "daemon" (info (pure SyncDaemon) (progDesc "Run sync daemon (file watcher)"))
+  )
+  where
+    syncInitOpts = SyncInit
+      <$> argument str (metavar "SERVER_URL")
+      <*> strOption
+          ( long "invite-code"
+         <> short 'i'
+         <> metavar "CODE"
+         <> help "Invite code for registration"
+          )
 
 todoOpts :: Env -> Parser TodoOpts
 todoOpts env = TodoOpts <$> configPathOpt <*> debugOpt <*> verboseOpt <*> (todoCmds env)

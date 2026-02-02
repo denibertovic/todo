@@ -1,4 +1,6 @@
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
@@ -6,8 +8,11 @@ module Todo.Types where
 
 import           RIO
 import           Data.Char           (chr, ord)
+import           Prelude             (toEnum, fromEnum)
 
-import           Data.Aeson          (FromJSON, Value (..), parseJSON, (.:), (.:?))
+import           Data.Aeson          (FromJSON, ToJSON, Value (..), parseJSON,
+                                      toJSON, (.:), (.:?), (.=), object, withObject,
+                                      withText)
 import qualified Data.Aeson          as JSON
 import qualified Data.Aeson.Types    as JSON
 import qualified Data.Aeson.Key      as Key
@@ -23,13 +28,23 @@ import           Forge.Github.Types  (GithubConfig (..),
                                       GithubIssueDetails (..))
 import           Forge.Gitlab.Types  (GitlabConfig (..), GitlabTodoDetails (..))
 
-data App = App { appConfig :: !TodoConfig, appLogger :: !LogFunc  }
+data App = App
+  { appConfig     :: !TodoConfig
+  , appLogger     :: !LogFunc
+  , appConfigPath :: !FilePath
+  }
 
 class HasConfig env where
   configL :: Lens' env TodoConfig
 
+class HasConfigPath env where
+  configPathL :: Lens' env FilePath
+
 instance HasConfig App where
   configL = lens appConfig (\x y -> x { appConfig = y })
+
+instance HasConfigPath App where
+  configPathL = lens appConfigPath (\x y -> x { appConfigPath = y })
 
 instance HasLogFunc App where
   logFuncL = lens appLogger (\x y -> x { appLogger = y })
@@ -146,11 +161,49 @@ instance FromJSON Remote where
       return $ Remote {remoteName=name, remoteConfig=c}
     parseJSON _ = fail "Expected Object for Remote value"
 
+-- | Sync configuration
+data SyncConfig = SyncConfig
+  { syncEnabled        :: !Bool
+  , syncServerUrl      :: !T.Text
+  , syncDeviceName     :: !T.Text
+  , syncIntervalSecs   :: !Int
+  , syncAuthToken      :: !(Maybe T.Text)
+  } deriving (Eq, Show, Generic)
+
+instance ToJSON SyncConfig where
+  toJSON SyncConfig{..} = object
+    [ "enabled"               .= syncEnabled
+    , "server_url"            .= syncServerUrl
+    , "device_name"           .= syncDeviceName
+    , "sync_interval_seconds" .= syncIntervalSecs
+    , "auth_token"            .= syncAuthToken
+    ]
+
+instance FromJSON SyncConfig where
+  parseJSON = withObject "SyncConfig" $ \o -> do
+    syncEnabled      <- o .: "enabled"
+    syncServerUrl    <- o .: "server_url"
+    syncDeviceName   <- o .: "device_name"
+    syncIntervalSecs <- o .: "sync_interval_seconds"
+    syncAuthToken    <- o .:? "auth_token"
+    return SyncConfig{..}
+
+-- | Default sync config (disabled)
+defaultSyncConfig :: SyncConfig
+defaultSyncConfig = SyncConfig
+  { syncEnabled      = False
+  , syncServerUrl    = ""
+  , syncDeviceName   = "default"
+  , syncIntervalSecs = 300
+  , syncAuthToken    = Nothing
+  }
+
 data TodoConfig = TodoConfig { todoDir        :: FilePath
                              , todoFile       :: FilePath
                              , todoDoneFile   :: FilePath
                              , todoReportFile :: FilePath
                              , todoRemotes    :: [Remote]
+                             , todoSync       :: SyncConfig
                              } deriving (Eq, Show)
 
 instance FromJSON TodoConfig where
@@ -160,6 +213,9 @@ instance FromJSON TodoConfig where
     todoDoneFile <- o .: "done_file"
     todoReportFile <- o .: "report_file"
     todoRemotes <- (o .: "remotes") >>= parseJSON
+    todoSync <- o .:? "sync" >>= \case
+      Just s  -> return s
+      Nothing -> return defaultSyncConfig
     return $ TodoConfig {..}
   parseJSON _ = fail "Expected Object for Config value"
 
@@ -263,4 +319,98 @@ instance Show Tag where
   show (TagDueDate d)   = "due:" <> (show d)
   show TagNext          = "due:next"
   show (TagOrigin link) = "origin:" <> (show link)
+
+-- JSON instances for sync serialization
+
+instance ToJSON Priority where
+  toJSON p = JSON.String $ T.pack [chr (ord 'A' + fromEnum p)]
+
+instance FromJSON Priority where
+  parseJSON = withText "Priority" $ \t ->
+    case T.unpack t of
+      [c] | c >= 'A' && c <= 'Z' -> return $ toEnum (ord c - ord 'A')
+      _ -> fail "Priority must be a single letter A-Z"
+
+instance ToJSON Link where
+  toJSON (Link l) = JSON.String l
+
+instance FromJSON Link where
+  parseJSON = withText "Link" $ \t -> return $ Link t
+
+instance ToJSON Context where
+  toJSON (Context c) = JSON.String c
+
+instance FromJSON Context where
+  parseJSON = withText "Context" $ \t -> return $ Context t
+
+instance ToJSON Project where
+  toJSON (Project p) = JSON.String p
+
+instance FromJSON Project where
+  parseJSON = withText "Project" $ \t -> return $ Project t
+
+instance ToJSON Tag where
+  toJSON (Tag key value) = object ["type" .= ("tag" :: T.Text), "key" .= key, "value" .= value]
+  toJSON (TagDueDate d)  = object ["type" .= ("due_date" :: T.Text), "date" .= d]
+  toJSON TagNext         = object ["type" .= ("due_next" :: T.Text)]
+  toJSON (TagOrigin l)   = object ["type" .= ("origin" :: T.Text), "link" .= l]
+
+instance FromJSON Tag where
+  parseJSON = withObject "Tag" $ \o -> do
+    tagType <- o .: "type" :: JSON.Parser T.Text
+    case tagType of
+      "tag"      -> Tag <$> o .: "key" <*> o .: "value"
+      "due_date" -> TagDueDate <$> o .: "date"
+      "due_next" -> return TagNext
+      "origin"   -> TagOrigin <$> o .: "link"
+      _          -> fail $ "Unknown tag type: " <> T.unpack tagType
+
+instance ToJSON Metadata where
+  toJSON (MetadataProject p) = object ["type" .= ("project" :: T.Text), "project" .= p]
+  toJSON (MetadataContext c) = object ["type" .= ("context" :: T.Text), "context" .= c]
+  toJSON (MetadataTag t)     = object ["type" .= ("tag" :: T.Text), "tag" .= t]
+  toJSON (MetadataString s)  = object ["type" .= ("string" :: T.Text), "value" .= s]
+  toJSON (MetadataLink l)    = object ["type" .= ("link" :: T.Text), "link" .= l]
+
+instance FromJSON Metadata where
+  parseJSON = withObject "Metadata" $ \o -> do
+    metaType <- o .: "type" :: JSON.Parser T.Text
+    case metaType of
+      "project" -> MetadataProject <$> o .: "project"
+      "context" -> MetadataContext <$> o .: "context"
+      "tag"     -> MetadataTag <$> o .: "tag"
+      "string"  -> MetadataString <$> o .: "value"
+      "link"    -> MetadataLink <$> o .: "link"
+      _         -> fail $ "Unknown metadata type: " <> T.unpack metaType
+
+instance ToJSON TodoItem where
+  toJSON TodoItem{..} = object
+    [ "priority"     .= tPriority
+    , "description"  .= tDescription
+    , "metadata"     .= tMetadata
+    , "created_at"   .= tCreatedAt
+    , "completed_at" .= tCompletedAt
+    ]
+
+instance FromJSON TodoItem where
+  parseJSON = withObject "TodoItem" $ \o -> do
+    tPriority    <- o .:? "priority"
+    tDescription <- o .: "description"
+    tMetadata    <- o .: "metadata"
+    tCreatedAt   <- o .:? "created_at"
+    tCompletedAt <- o .:? "completed_at"
+    return TodoItem{..}
+
+instance ToJSON a => ToJSON (Todo a) where
+  toJSON (Completed item)  = object ["status" .= ("completed" :: T.Text), "item" .= item]
+  toJSON (Incomplete item) = object ["status" .= ("incomplete" :: T.Text), "item" .= item]
+
+instance FromJSON a => FromJSON (Todo a) where
+  parseJSON = withObject "Todo" $ \o -> do
+    status <- o .: "status" :: JSON.Parser T.Text
+    item <- o .: "item"
+    case status of
+      "completed"  -> return $ Completed item
+      "incomplete" -> return $ Incomplete item
+      _            -> fail $ "Unknown todo status: " <> T.unpack status
 

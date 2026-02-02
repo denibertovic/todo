@@ -6,7 +6,7 @@ report_file: /tmp/todo/report.txt
 
 remotes:
   # Can be more of them depending on hosted vs.
-  # enterprise (elf-hosted)
+  # enterprise (self-hosted)
   - name: github
     access_token: "secret"
     api_url: https://api.github.com/
@@ -15,7 +15,7 @@ remotes:
       - org1/*
       - org2/repo1
     add_context:
-      - org1/*: foor
+      - org1/*: foo
       - org2/*: bar
       - org2/repo: baz
   - name: gitlab
@@ -23,3 +23,21 @@ remotes:
     api_url: https://gitlab.com/api/v4/
     type: gitlab
 # NOTE: Supported types are: gitlab, github
+
+# Sync configuration for CRDT-based sync across devices
+# To set up sync:
+#   1. Run 'todo-sync-server' on your server (or use a hosted instance)
+#   2. Run 'todo sync init <server-url>' to register this device
+#   3. Add the auth_token from the init command to this config
+sync:
+  enabled: false
+  # URL of your sync server
+  server_url: "http://localhost:8080"
+  # Name for this device (shown in server logs)
+  device_name: "my-laptop"
+  # Enable automatic sync on file changes
+  auto_sync: true
+  # Interval for periodic sync (in seconds) - fallback for missed events
+  sync_interval_seconds: 300
+  # Auth token from 'todo sync init' (uncomment and fill in)
+  # auth_token: "your-auth-token-here"

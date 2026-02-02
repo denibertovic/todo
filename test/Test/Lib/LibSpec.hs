@@ -88,6 +88,7 @@ testConfig d = TodoConfig { todoDir=d
                           , todoDoneFile=d </> "done.txt"
                           , todoReportFile=d </> "report.txt"
                           , todoRemotes=[]
+                          , todoSync=defaultSyncConfig
                           }
 
 testTodoTxtLines :: [T.Text]
@@ -110,5 +111,5 @@ withTempTodo f = do
       TIO.writeFile (todoDoneFile cfg) ""
       lo <- logOptionsHandle stderr True
       withLogFunc lo $ \l -> do
-        let app = App { appConfig=cfg, appLogger=l }
+        let app = App { appConfig=cfg, appLogger=l, appConfigPath=d </> "config.yaml" }
         f app
