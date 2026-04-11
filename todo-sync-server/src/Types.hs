@@ -10,6 +10,7 @@ module Types
     -- * API Types
   , SyncRequest(..)
   , SyncResponse(..)
+  , SyncCursor(..)
   , RegisterRequest(..)
   , RegisterResponse(..)
   , HealthResponse(..)
@@ -100,10 +101,35 @@ instance FromJSON Operation where
     operationTimestamp <- o .: "timestamp"
     return Operation{..}
 
+-- | Pagination cursor for the /sync endpoint.
+--
+-- Operations are totally ordered on the server by
+-- @(created_at, op_id)@, where @created_at@ is the insertion time and
+-- @op_id@ is the operation's UUID. Using a compound cursor is what lets
+-- us paginate correctly when many operations share the same insertion
+-- time (which is the common case, since 'insertOperations' stamps every
+-- op in a batch with a single @now@).
+data SyncCursor = SyncCursor
+  { scTimestamp :: !UTCTime
+  , scOpId      :: !OperationId
+  } deriving (Eq, Show, Generic)
+
+instance ToJSON SyncCursor where
+  toJSON SyncCursor{..} = object
+    [ "timestamp" .= scTimestamp
+    , "op_id"     .= scOpId
+    ]
+
+instance FromJSON SyncCursor where
+  parseJSON = withObject "SyncCursor" $ \o -> do
+    scTimestamp <- o .: "timestamp"
+    scOpId      <- o .: "op_id"
+    return SyncCursor{..}
+
 -- | Sync request from client
 data SyncRequest = SyncRequest
   { srDeviceId   :: !DeviceId
-  , srLastSync   :: !(Maybe UTCTime)
+  , srCursor     :: !(Maybe SyncCursor)
   , srOperations :: ![Value]  -- Raw JSON operations
   , srAuthToken  :: !(Maybe T.Text)
   } deriving (Eq, Show, Generic)
@@ -111,7 +137,7 @@ data SyncRequest = SyncRequest
 instance ToJSON SyncRequest where
   toJSON SyncRequest{..} = object
     [ "device_id"  .= srDeviceId
-    , "last_sync"  .= srLastSync
+    , "cursor"     .= srCursor
     , "operations" .= srOperations
     , "auth_token" .= srAuthToken
     ]
@@ -119,27 +145,35 @@ instance ToJSON SyncRequest where
 instance FromJSON SyncRequest where
   parseJSON = withObject "SyncRequest" $ \o -> do
     srDeviceId   <- o .: "device_id"
-    srLastSync   <- o .:? "last_sync"
+    srCursor     <- o .:? "cursor"
     srOperations <- o .: "operations"
     srAuthToken  <- o .:? "auth_token"
     return SyncRequest{..}
 
--- | Sync response to client
+-- | Sync response to client.
+--
+-- @sresCursor@ is the cursor the client should send on its next request
+-- to pick up where this response left off. @sresHasMore@ is true when
+-- there are further operations beyond this page, in which case the
+-- client should immediately re-issue /sync with the new cursor.
 data SyncResponse = SyncResponse
   { sresOperations :: ![Value]  -- Raw JSON operations
-  , sresSyncTime   :: !UTCTime
+  , sresCursor     :: !(Maybe SyncCursor)
+  , sresHasMore    :: !Bool
   } deriving (Eq, Show, Generic)
 
 instance ToJSON SyncResponse where
   toJSON SyncResponse{..} = object
     [ "operations" .= sresOperations
-    , "sync_time"  .= sresSyncTime
+    , "cursor"     .= sresCursor
+    , "has_more"   .= sresHasMore
     ]
 
 instance FromJSON SyncResponse where
   parseJSON = withObject "SyncResponse" $ \o -> do
     sresOperations <- o .: "operations"
-    sresSyncTime   <- o .: "sync_time"
+    sresCursor     <- o .:? "cursor"
+    sresHasMore    <- o .: "has_more"
     return SyncResponse{..}
 
 -- | Device registration request

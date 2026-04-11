@@ -13,16 +13,19 @@ module Server
 import           RIO hiding (Handler)
 import qualified RIO.Text as T
 import           Prelude (putStrLn)
-import qualified Data.UUID as UUID
 
 import           Control.Monad.IO.Class  (liftIO)
-import           Data.Time.Clock         (getCurrentTime)
 import           Network.Wai             (Application)
 import           Network.Wai.Handler.Warp (run)
 import           Servant
 
 import           Database
 import           Types
+
+-- | Maximum number of operations returned in a single /sync response.
+-- Clients are expected to keep calling /sync while @has_more@ is true.
+defaultPageSize :: Int
+defaultPageSize = 500
 
 -- | The Sync API type
 type SyncAPI =
@@ -41,7 +44,11 @@ syncServer dbPath =
   :<|> handleRegister dbPath
   :<|> handleHealth
 
--- | Handle sync request
+-- | Handle sync request.
+--
+-- Returns at most 'defaultPageSize' operations per call; if more are
+-- available, @has_more@ is true and the client should re-issue /sync
+-- with the returned @cursor@.
 handleSync :: FilePath -> SyncRequest -> Handler SyncResponse
 handleSync dbPath SyncRequest{..} = do
   -- Validate auth token if provided
@@ -61,38 +68,33 @@ handleSync dbPath SyncRequest{..} = do
   liftIO $ withDb dbPath $ \conn ->
     insertOperations conn srOperations
 
-  -- Get operations since last sync
-  ops <- liftIO $ withDb dbPath $ \conn ->
-    getOperationsSince conn srLastSync
+  -- Fetch one page of operations after the client's cursor
+  page <- liftIO $ withDb dbPath $ \conn ->
+    getOperationsAfterCursor conn srCursor defaultPageSize
 
-  -- Return response
-  now <- liftIO getCurrentTime
   return SyncResponse
-    { sresOperations = ops
-    , sresSyncTime   = now
+    { sresOperations = poOperations page
+    , sresCursor     = poNextCursor page
+    , sresHasMore    = poHasMore page
     }
 
--- | Handle device registration
+-- | Handle device registration.
+--
+-- The invite code is validated and the device row is created in a
+-- single database transaction, so an invalid/expired code cannot leave
+-- an orphaned device behind.
 handleRegister :: FilePath -> RegisterRequest -> Handler RegisterResponse
 handleRegister dbPath RegisterRequest{..} = do
-  -- First create the device to get the device ID
-  (deviceId, authToken) <- liftIO $ withDb dbPath $ \conn ->
-    createDevice conn rrDeviceName
-
-  -- Validate and consume the invite code
-  let DeviceId deviceUuid = deviceId
-      deviceIdText = UUID.toText deviceUuid
-  valid <- liftIO $ withDb dbPath $ \conn ->
-    validateAndConsumeInviteCode conn rrInviteCode deviceIdText
-
-  unless valid $ do
-    -- TODO: ideally we'd rollback the device creation, but for now just reject
-    throwError err403 { errBody = "Invalid or expired invite code" }
-
-  return RegisterResponse
-    { rresDeviceId  = deviceId
-    , rresAuthToken = authToken
-    }
+  result <- liftIO $ withDb dbPath $ \conn ->
+    registerDeviceWithInviteCode conn rrDeviceName rrInviteCode
+  case result of
+    Nothing ->
+      throwError err403 { errBody = "Invalid or expired invite code" }
+    Just (deviceId, authToken) ->
+      return RegisterResponse
+        { rresDeviceId  = deviceId
+        , rresAuthToken = authToken
+        }
 
 -- | Handle health check
 handleHealth :: Handler HealthResponse

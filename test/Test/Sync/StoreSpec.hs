@@ -58,11 +58,11 @@ spec = describe "Sync Store" $ do
               , siCreatedAt   = time1
               }
             state = SyncState
-              { ssItems      = Map.singleton itemId1 syncItem
-              , ssOperations = []
-              , ssLastSync   = Just time1
-              , ssDeviceId   = device1
-              , ssPendingOps = []
+              { ssItems        = Map.singleton itemId1 syncItem
+              , ssOperations   = []
+              , ssServerCursor = Just (SyncCursor time1 opId1)
+              , ssDeviceId     = device1
+              , ssPendingOps   = []
               }
         saveSyncState tmpDir state
         loaded <- loadSyncState tmpDir
@@ -73,7 +73,7 @@ spec = describe "Sync Store" $ do
       withSystemTempDirectory "todo-store-test" $ \tmpDir -> do
         state <- initSyncState tmpDir "test-device"
         Map.null (ssItems state) `shouldBe` True
-        ssLastSync state `shouldBe` Nothing
+        ssServerCursor state `shouldBe` Nothing
         null (ssOperations state) `shouldBe` True
 
     it "saves the state to disk" $ do

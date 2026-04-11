@@ -5,6 +5,7 @@
 module Todo.Sync.Client
   ( -- * Sync Operations
     syncWithServer
+  , syncAllPages
   , registerDevice
   , checkServerHealth
     -- * Client Types
@@ -82,6 +83,34 @@ syncWithServer serverUrl authToken syncReq = do
         else if status == 401
           then return $ Left $ AuthError "Invalid or expired auth token"
           else return $ Left $ ServerError status $ T.pack $ show body
+
+-- | Repeatedly call /sync until the server reports @has_more = false@,
+-- accumulating every returned operation. Pending operations from the
+-- caller are only sent on the *first* call; subsequent pagination
+-- rounds send an empty pending list with the latest cursor.
+--
+-- Returns the merged list of operations received across all pages,
+-- together with the final cursor to persist.
+syncAllPages
+  :: T.Text           -- ^ Server URL
+  -> Maybe T.Text     -- ^ Auth token
+  -> SyncRequest      -- ^ Initial sync request (pending ops go here)
+  -> IO (SyncResult ([Operation], Maybe SyncCursor))
+syncAllPages serverUrl authToken initialReq = go initialReq []
+  where
+    go req acc = do
+      result <- syncWithServer serverUrl authToken req
+      case result of
+        Left err -> return $ Left err
+        Right SyncResponse{..}
+          | sresHasMore ->
+              let nextReq = req
+                    { srCursor     = sresCursor
+                    , srOperations = []  -- only send pending ops on first call
+                    }
+              in go nextReq (acc ++ sresOperations)
+          | otherwise ->
+              return $ Right (acc ++ sresOperations, sresCursor)
 
 -- | Register a new device with the server
 registerDevice

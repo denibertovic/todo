@@ -43,12 +43,12 @@ import           Todo.Options
 import           Todo.Parser
 import           Todo.Types
 import           Todo.Sync.Types    (SyncRequest(..), SyncResponse(..), RegisterResponse(..),
-                                     SyncState(..), DeviceId, generateDeviceId)
+                                     SyncState(..), SyncCursor(..), DeviceId, generateDeviceId)
 import           Todo.Sync.CRDT     (applyOperations, materializeToTodos, mergeOperations,
                                      materialize)
 import           Todo.Sync.Store    (loadSyncState, saveSyncState, initSyncState,
                                      migrateExistingTodos, getSyncDir, ensureSyncDir)
-import           Todo.Sync.Client   (syncWithServer, registerDevice, checkServerHealth,
+import           Todo.Sync.Client   (syncAllPages, registerDevice, checkServerHealth,
                                      SyncError(..))
 import           Todo.Sync.Daemon   (startSyncDaemon, stopSyncDaemon, performSync)
 
@@ -489,7 +489,7 @@ syncStatus = do
     Nothing -> liftIO $ putStrLn "Sync state:   Not initialized"
     Just state -> do
       liftIO $ putStrLn $ "Device ID:    " <> show (ssDeviceId state)
-      liftIO $ putStrLn $ "Last sync:    " <> maybe "Never" show (ssLastSync state)
+      liftIO $ putStrLn $ "Last sync:    " <> maybe "Never" (show . scTimestamp) (ssServerCursor state)
       liftIO $ putStrLn $ "Pending ops:  " <> show (length $ ssPendingOps state)
       liftIO $ putStrLn $ "Total ops:    " <> show (length $ ssOperations state)
       liftIO $ putStrLn $ "Items:        " <> show (Map.size $ ssItems state)
@@ -524,24 +524,24 @@ syncNow = do
       let pendingOps = ssPendingOps state
           syncReq = SyncRequest
             { srDeviceId   = ssDeviceId state
-            , srLastSync   = ssLastSync state
+            , srCursor     = ssServerCursor state
             , srOperations = pendingOps
             , srAuthToken  = syncAuthToken syncCfg
             }
 
-      -- Perform sync
-      result <- liftIO $ syncWithServer (syncServerUrl syncCfg) (syncAuthToken syncCfg) syncReq
+      -- Perform sync (follows pagination until has_more == false)
+      result <- liftIO $ syncAllPages (syncServerUrl syncCfg) (syncAuthToken syncCfg) syncReq
       case result of
         Left err -> liftIO $ die $ "Sync failed: " <> show err
-        Right SyncResponse{..} -> do
+        Right (remoteOps, newCursor) -> do
           -- Merge operations
-          let mergedOps = mergeOperations (ssOperations state) sresOperations
+          let mergedOps = mergeOperations (ssOperations state) remoteOps
               newItems = materialize (ssDeviceId state) mergedOps
               newState = state
-                { ssOperations = mergedOps
-                , ssLastSync   = Just sresSyncTime
-                , ssPendingOps = []
-                , ssItems      = newItems
+                { ssOperations   = mergedOps
+                , ssServerCursor = newCursor
+                , ssPendingOps   = []
+                , ssItems        = newItems
                 }
 
           -- Save state
@@ -554,7 +554,7 @@ syncNow = do
 
           liftIO $ putStrLn $ "Sync complete!"
           liftIO $ putStrLn $ "  Sent:     " <> show (length pendingOps) <> " operations"
-          liftIO $ putStrLn $ "  Received: " <> show (length sresOperations) <> " operations"
+          liftIO $ putStrLn $ "  Received: " <> show (length remoteOps) <> " operations"
           liftIO $ putStrLn $ "  Items:    " <> show (Map.size newItems)
 
 -- | Enable or disable sync

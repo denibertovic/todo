@@ -11,12 +11,12 @@ module Database
   , updateDeviceLastSeen
     -- * Invite Code Operations
   , createInviteCode
-  , validateAndConsumeInviteCode
+  , registerDeviceWithInviteCode
   , listInviteCodes
     -- * Operation Storage
   , insertOperations
-  , getOperationsSince
-  , getAllOperations
+  , getOperationsAfterCursor
+  , PaginatedOps(..)
     -- * Types
   , DbDevice(..)
   , DbOperation(..)
@@ -35,7 +35,6 @@ import           Data.UUID               (UUID)
 import qualified Data.UUID               as UUID
 import qualified Data.UUID.V4            as UUID
 import           Database.SQLite.Simple
-import           Prelude                 (head)
 
 import           Types
 
@@ -189,24 +188,63 @@ extractOpFields val = case val of
       Just (String t) -> Just t
       _ -> Nothing
 
--- | Get operations since a given timestamp
-getOperationsSince :: Connection -> Maybe UTCTime -> IO [Value]
-getOperationsSince conn maybeTime = do
-  results <- case maybeTime of
-    Nothing -> query_ conn
-      "SELECT payload FROM operations ORDER BY created_at ASC"
-    Just time -> query conn
-      "SELECT payload FROM operations WHERE created_at > ? ORDER BY created_at ASC"
-      (Only time)
-  return $ catMaybes $ map parsePayload results
-  where
-    parsePayload :: Only T.Text -> Maybe Value
-    parsePayload (Only payload) =
-      JSON.decode $ BL.fromStrict $ encodeUtf8 payload
+-- | Result of a paginated fetch from the operation log.
+data PaginatedOps = PaginatedOps
+  { poOperations :: ![Value]
+    -- ^ The decoded operation payloads for this page.
+  , poNextCursor :: !(Maybe SyncCursor)
+    -- ^ Cursor the client should send next. If the page was empty this
+    -- is just the cursor the client sent (unchanged); otherwise it is
+    -- the (created_at, id) of the last row in the page.
+  , poHasMore    :: !Bool
+    -- ^ True iff there are operations beyond this page.
+  } deriving (Eq, Show)
 
--- | Get all operations
-getAllOperations :: Connection -> IO [Value]
-getAllOperations conn = getOperationsSince conn Nothing
+-- | Fetch a page of operations strictly after the given cursor.
+--
+-- Ordering is a strict total order over @(created_at, id)@. We fetch
+-- @limit + 1@ rows and use the extra row only to decide whether there
+-- are more pages available. This handles the batch-insert case where
+-- many operations share an identical @created_at@ timestamp.
+getOperationsAfterCursor
+  :: Connection
+  -> Maybe SyncCursor
+  -> Int  -- ^ page size limit
+  -> IO PaginatedOps
+getOperationsAfterCursor conn cursor pageSize = do
+  let fetchLimit = pageSize + 1
+  rows <- case cursor of
+    Nothing -> query conn
+      "SELECT id, payload, created_at FROM operations \
+      \ORDER BY created_at ASC, id ASC LIMIT ?"
+      (Only fetchLimit) :: IO [(T.Text, T.Text, UTCTime)]
+    Just SyncCursor{..} -> do
+      let OperationId opUuid = scOpId
+          opIdText = UUID.toText opUuid
+      query conn
+        "SELECT id, payload, created_at FROM operations \
+        \WHERE created_at > ? OR (created_at = ? AND id > ?) \
+        \ORDER BY created_at ASC, id ASC LIMIT ?"
+        (scTimestamp, scTimestamp, opIdText, fetchLimit)
+          :: IO [(T.Text, T.Text, UTCTime)]
+  let hasMore  = length rows > pageSize
+      pageRows = take pageSize rows
+      ops      = mapMaybe decodePayload pageRows
+      next     = case reverse pageRows of
+        [] -> cursor  -- no rows in this page; keep the client's cursor
+        ((opIdText, _, createdAt) : _) ->
+          case UUID.fromText opIdText of
+            Just uuid -> Just (SyncCursor createdAt (OperationId uuid))
+            Nothing   -> cursor  -- malformed row, shouldn't happen
+  return PaginatedOps
+    { poOperations = ops
+    , poNextCursor = next
+    , poHasMore    = hasMore
+    }
+  where
+    decodePayload :: (T.Text, T.Text, UTCTime) -> Maybe Value
+    decodePayload (_, payload, _) =
+      JSON.decode $ BL.fromStrict $ encodeUtf8 payload
 
 -- | Create a new invite code with given expiry duration (in seconds)
 createInviteCode :: FilePath -> NominalDiffTime -> IO T.Text
@@ -222,25 +260,39 @@ createInviteCode dbPath expirySeconds = withDb dbPath $ \conn -> do
 
   return code
 
--- | Validate an invite code and mark it as used. Returns Nothing if invalid/expired/used.
-validateAndConsumeInviteCode :: Connection -> T.Text -> T.Text -> IO Bool
-validateAndConsumeInviteCode conn code deviceId = do
+-- | Atomically validate an invite code, create a new device, and
+-- consume the invite code, all inside a single SQLite transaction.
+--
+-- Returns @Nothing@ if the invite code is missing, expired, or already
+-- used — in which case no device row is created. This replaces the
+-- previous two-phase flow where the device was created first and the
+-- invite code was validated afterwards (which could leave orphaned
+-- device rows on failed registrations).
+registerDeviceWithInviteCode
+  :: Connection
+  -> T.Text  -- ^ device name
+  -> T.Text  -- ^ invite code
+  -> IO (Maybe (DeviceId, T.Text))
+registerDeviceWithInviteCode conn deviceName code = withTransaction conn $ do
   now <- getCurrentTime
-  -- Check if code exists, not expired, and not used
-  results <- query conn
-    "SELECT code, created_at, expires_at, used_at, used_by_device_id \
-    \FROM invite_codes \
+  codeRows <- query conn
+    "SELECT code FROM invite_codes \
     \WHERE code = ? AND expires_at > ? AND used_at IS NULL"
-    (code, now) :: IO [DbInviteCode]
-
-  case results of
-    [_] -> do
-      -- Mark as used
+    (code, now) :: IO [Only T.Text]
+  case codeRows of
+    [] -> return Nothing
+    _  -> do
+      deviceUuid <- UUID.nextRandom
+      tokenUuid  <- UUID.nextRandom
+      let deviceIdText = UUID.toText deviceUuid
+          authToken    = UUID.toText tokenUuid
+      execute conn
+        "INSERT INTO devices (id, name, auth_token, last_seen) VALUES (?, ?, ?, ?)"
+        (deviceIdText, deviceName, authToken, Nothing :: Maybe UTCTime)
       execute conn
         "UPDATE invite_codes SET used_at = ?, used_by_device_id = ? WHERE code = ?"
-        (now, deviceId, code)
-      return True
-    _ -> return False
+        (now, deviceIdText, code)
+      return $ Just (DeviceId deviceUuid, authToken)
 
 -- | List all invite codes (for admin purposes)
 listInviteCodes :: FilePath -> IO [DbInviteCode]

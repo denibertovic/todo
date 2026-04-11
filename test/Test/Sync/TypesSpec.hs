@@ -131,20 +131,26 @@ spec = describe "Sync Types JSON" $ do
             , siDescription = LWWRegister "Test" time1 device1
             , siCreatedAt   = time1
             }
+          cursor1 = SyncCursor time1 opId1
           state = SyncState
-            { ssItems      = Map.singleton itemId1 syncItem
-            , ssOperations = []
-            , ssLastSync   = Just time1
-            , ssDeviceId   = device1
-            , ssPendingOps = []
+            { ssItems        = Map.singleton itemId1 syncItem
+            , ssOperations   = []
+            , ssServerCursor = Just cursor1
+            , ssDeviceId     = device1
+            , ssPendingOps   = []
             }
       decode (encode state) `shouldBe` Just state
+
+  describe "SyncCursor" $ do
+    it "roundtrips through JSON" $ do
+      let cursor = SyncCursor time1 opId1
+      decode (encode cursor) `shouldBe` Just cursor
 
   describe "SyncRequest" $ do
     it "roundtrips through JSON" $ do
       let req = SyncRequest
             { srDeviceId   = device1
-            , srLastSync   = Just time1
+            , srCursor     = Just (SyncCursor time1 opId1)
             , srOperations = [OpAdd opId1 itemId1 testItem time1 device1]
             , srAuthToken  = Just "token123"
             }
@@ -153,17 +159,26 @@ spec = describe "Sync Types JSON" $ do
     it "handles missing optional fields" $ do
       let req = SyncRequest
             { srDeviceId   = device1
-            , srLastSync   = Nothing
+            , srCursor     = Nothing
             , srOperations = []
             , srAuthToken  = Nothing
             }
       decode (encode req) `shouldBe` Just req
 
   describe "SyncResponse" $ do
-    it "roundtrips through JSON" $ do
+    it "roundtrips through JSON with cursor + has_more" $ do
       let resp = SyncResponse
             { sresOperations = [OpComplete opId1 itemId1 time1 device1]
-            , sresSyncTime   = time1
+            , sresCursor     = Just (SyncCursor time1 opId1)
+            , sresHasMore    = True
+            }
+      decode (encode resp) `shouldBe` Just resp
+
+    it "roundtrips through JSON with no cursor" $ do
+      let resp = SyncResponse
+            { sresOperations = []
+            , sresCursor     = Nothing
+            , sresHasMore    = False
             }
       decode (encode resp) `shouldBe` Just resp
 

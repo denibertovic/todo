@@ -22,6 +22,7 @@ module Todo.Sync.Types
     -- * API Types
   , SyncRequest(..)
   , SyncResponse(..)
+  , SyncCursor(..)
   , RegisterRequest(..)
   , RegisterResponse(..)
   , HealthResponse(..)
@@ -257,32 +258,74 @@ data SyncItem = SyncItem
 instance ToJSON SyncItem
 instance FromJSON SyncItem
 
--- | Local sync state
+-- | Local sync state.
+--
+-- @ssServerCursor@ is the opaque cursor returned by the server's last
+-- /sync response; we send it back on the next sync to pick up where we
+-- left off. It replaces the old @ssLastSync@ timestamp.
 data SyncState = SyncState
-  { ssItems      :: !(Map.Map ItemId SyncItem)  -- ^ Current materialized state
-  , ssOperations :: ![Operation]                -- ^ Operation log (newest first)
-  , ssLastSync   :: !(Maybe UTCTime)            -- ^ Last successful sync timestamp
-  , ssDeviceId   :: !DeviceId                   -- ^ This device's ID
-  , ssPendingOps :: ![Operation]                -- ^ Operations not yet synced
+  { ssItems        :: !(Map.Map ItemId SyncItem)  -- ^ Current materialized state
+  , ssOperations   :: ![Operation]                -- ^ Operation log (newest first)
+  , ssServerCursor :: !(Maybe SyncCursor)         -- ^ Cursor for the next /sync call
+  , ssDeviceId     :: !DeviceId                   -- ^ This device's ID
+  , ssPendingOps   :: ![Operation]                -- ^ Operations not yet synced
   } deriving (Eq, Show, Generic)
 
-instance ToJSON SyncState
-instance FromJSON SyncState
+instance ToJSON SyncState where
+  toJSON SyncState{..} = object
+    [ "ssItems"        .= ssItems
+    , "ssOperations"   .= ssOperations
+    , "ssServerCursor" .= ssServerCursor
+    , "ssDeviceId"     .= ssDeviceId
+    , "ssPendingOps"   .= ssPendingOps
+    ]
+
+-- | Tolerant decoder: falls back to @Nothing@ for @ssServerCursor@ if
+-- the on-disk state was written by an older version that stored
+-- @ssLastSync@ instead. The CRDT is idempotent, so the next sync will
+-- simply re-pull all operations once and move on.
+instance FromJSON SyncState where
+  parseJSON = withObject "SyncState" $ \o -> do
+    ssItems        <- o .:  "ssItems"
+    ssOperations   <- o .:  "ssOperations"
+    ssServerCursor <- o .:? "ssServerCursor"
+    ssDeviceId     <- o .:  "ssDeviceId"
+    ssPendingOps   <- o .:  "ssPendingOps"
+    return SyncState{..}
 
 -- | Create an empty sync state for a new device
 emptySyncState :: DeviceId -> SyncState
 emptySyncState deviceId = SyncState
-  { ssItems      = Map.empty
-  , ssOperations = []
-  , ssLastSync   = Nothing
-  , ssDeviceId   = deviceId
-  , ssPendingOps = []
+  { ssItems        = Map.empty
+  , ssOperations   = []
+  , ssServerCursor = Nothing
+  , ssDeviceId     = deviceId
+  , ssPendingOps   = []
   }
+
+-- | Pagination cursor for the /sync endpoint. Must match the
+-- server-side definition in 'Types.SyncCursor'.
+data SyncCursor = SyncCursor
+  { scTimestamp :: !UTCTime
+  , scOpId      :: !OperationId
+  } deriving (Eq, Show, Generic)
+
+instance ToJSON SyncCursor where
+  toJSON SyncCursor{..} = object
+    [ "timestamp" .= scTimestamp
+    , "op_id"     .= scOpId
+    ]
+
+instance FromJSON SyncCursor where
+  parseJSON = withObject "SyncCursor" $ \o -> do
+    scTimestamp <- o .: "timestamp"
+    scOpId      <- o .: "op_id"
+    return SyncCursor{..}
 
 -- | Sync API request
 data SyncRequest = SyncRequest
   { srDeviceId   :: !DeviceId
-  , srLastSync   :: !(Maybe UTCTime)
+  , srCursor     :: !(Maybe SyncCursor)
   , srOperations :: ![Operation]
   , srAuthToken  :: !(Maybe T.Text)
   } deriving (Eq, Show, Generic)
@@ -290,7 +333,7 @@ data SyncRequest = SyncRequest
 instance ToJSON SyncRequest where
   toJSON SyncRequest{..} = object
     [ "device_id"  .= srDeviceId
-    , "last_sync"  .= srLastSync
+    , "cursor"     .= srCursor
     , "operations" .= srOperations
     , "auth_token" .= srAuthToken
     ]
@@ -298,27 +341,32 @@ instance ToJSON SyncRequest where
 instance FromJSON SyncRequest where
   parseJSON = withObject "SyncRequest" $ \o -> do
     srDeviceId   <- o .: "device_id"
-    srLastSync   <- o .:? "last_sync"
+    srCursor     <- o .:? "cursor"
     srOperations <- o .: "operations"
     srAuthToken  <- o .:? "auth_token"
     return SyncRequest{..}
 
--- | Sync API response
+-- | Sync API response. The server may return up to a bounded number
+-- of operations per call; when @sresHasMore@ is true the client should
+-- immediately re-issue /sync using @sresCursor@ as @srCursor@.
 data SyncResponse = SyncResponse
   { sresOperations :: ![Operation]
-  , sresSyncTime   :: !UTCTime
+  , sresCursor     :: !(Maybe SyncCursor)
+  , sresHasMore    :: !Bool
   } deriving (Eq, Show, Generic)
 
 instance ToJSON SyncResponse where
   toJSON SyncResponse{..} = object
     [ "operations" .= sresOperations
-    , "sync_time"  .= sresSyncTime
+    , "cursor"     .= sresCursor
+    , "has_more"   .= sresHasMore
     ]
 
 instance FromJSON SyncResponse where
   parseJSON = withObject "SyncResponse" $ \o -> do
-    sresOperations <- o .: "operations"
-    sresSyncTime   <- o .: "sync_time"
+    sresOperations <- o .:  "operations"
+    sresCursor     <- o .:? "cursor"
+    sresHasMore    <- o .:  "has_more"
     return SyncResponse{..}
 
 -- | Device registration request

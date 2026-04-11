@@ -260,24 +260,24 @@ doSync config stateTVar lastContentTVar = do
       let pendingOps = ssPendingOps state
           syncReq = SyncRequest
             { srDeviceId   = ssDeviceId state
-            , srLastSync   = ssLastSync state
+            , srCursor     = ssServerCursor state
             , srOperations = pendingOps
             , srAuthToken  = syncAuthToken syncCfg
             }
 
-      -- Send sync request
-      result <- syncWithServer (syncServerUrl syncCfg) (syncAuthToken syncCfg) syncReq
+      -- Send sync request (follows pagination until has_more == false)
+      result <- syncAllPages (syncServerUrl syncCfg) (syncAuthToken syncCfg) syncReq
       case result of
         Left err -> return $ Left err
-        Right SyncResponse{..} -> do
-          putStrLn $ "Received " <> show (length sresOperations) <> " operations from server"
+        Right (remoteOps, newCursor) -> do
+          putStrLn $ "Received " <> show (length remoteOps) <> " operations from server"
           -- Merge remote operations
-          let mergedOps = mergeOperations (ssOperations state) sresOperations
+          let mergedOps = mergeOperations (ssOperations state) remoteOps
               newState = state
-                { ssOperations = mergedOps
-                , ssLastSync   = Just sresSyncTime
-                , ssPendingOps = []  -- Clear pending ops after successful sync
-                , ssItems      = materialize (ssDeviceId state) mergedOps
+                { ssOperations   = mergedOps
+                , ssServerCursor = newCursor
+                , ssPendingOps   = []  -- Clear pending ops after successful sync
+                , ssItems        = materialize (ssDeviceId state) mergedOps
                 }
 
           -- Update state
