@@ -45,6 +45,7 @@ library
     , optparse-applicative
     , parsec
     , pretty-simple
+    , qrcode-core
     , rainbow
     , rio
     , servant
@@ -61,6 +62,7 @@ library
       Todo.Lib
       Todo.Options
       Todo.Parser
+      Todo.QrRenderer
       Todo.Types
       Todo.Sync.Types
       Todo.Sync.CRDT
@@ -162,6 +164,7 @@ test-suite todo-test
   other-modules:
       Test.Lib.LibSpec
       Test.Parser.ParserSpec
+      Test.QrRendererSpec
       Test.Sync.CRDTSpec
       Test.Sync.TypesSpec
       Test.Sync.StoreSpec

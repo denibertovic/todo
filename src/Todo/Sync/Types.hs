@@ -25,6 +25,8 @@ module Todo.Sync.Types
   , SyncCursor(..)
   , RegisterRequest(..)
   , RegisterResponse(..)
+  , CreateInviteRequest(..)
+  , CreateInviteResponse(..)
   , HealthResponse(..)
     -- * Utilities
   , generateItemId
@@ -404,6 +406,43 @@ instance FromJSON RegisterResponse where
     rresDeviceId  <- o .: "device_id"
     rresAuthToken <- o .: "auth_token"
     return RegisterResponse{..}
+
+-- | @POST /invite@ request body. Mirrors
+-- 'Types.CreateInviteRequest' on the server side. Sent by the
+-- laptop CLI's @todo sync invite@ subcommand to ask an
+-- already-configured sync server to mint a fresh invite code
+-- without needing admin SSH access to the server host.
+data CreateInviteRequest = CreateInviteRequest
+  { cirExpiresInHours :: !(Maybe Int)
+  } deriving (Eq, Show, Generic)
+
+instance ToJSON CreateInviteRequest where
+  toJSON CreateInviteRequest{..} = object
+    [ "expires_in_hours" .= cirExpiresInHours
+    ]
+
+instance FromJSON CreateInviteRequest where
+  parseJSON = withObject "CreateInviteRequest" $ \o -> do
+    cirExpiresInHours <- o .:? "expires_in_hours"
+    return CreateInviteRequest{..}
+
+-- | @POST /invite@ response body.
+data CreateInviteResponse = CreateInviteResponse
+  { cresInviteCode :: !T.Text
+  , cresExpiresAt  :: !UTCTime
+  } deriving (Eq, Show, Generic)
+
+instance ToJSON CreateInviteResponse where
+  toJSON CreateInviteResponse{..} = object
+    [ "invite_code" .= cresInviteCode
+    , "expires_at"  .= cresExpiresAt
+    ]
+
+instance FromJSON CreateInviteResponse where
+  parseJSON = withObject "CreateInviteResponse" $ \o -> do
+    cresInviteCode <- o .: "invite_code"
+    cresExpiresAt  <- o .: "expires_at"
+    return CreateInviteResponse{..}
 
 -- | Health check response
 data HealthResponse = HealthResponse

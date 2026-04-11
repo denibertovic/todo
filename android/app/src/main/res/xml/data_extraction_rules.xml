@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Don't auto-backup the auth token and device_id — a sync
+             server instance is tied to a specific device registration,
+             and restoring a backup to a new device would confuse the
+             server's device ledger. The user should re-run onboarding
+             on the new device. -->
+        <exclude domain="database" path="todo.db" />
+        <exclude domain="sharedpref" />
+    </cloud-backup>
+</data-extraction-rules>

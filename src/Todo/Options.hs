@@ -29,6 +29,7 @@ data TodoCommand = AddTodo T.Text
                  | SyncEnable            -- "todo sync enable"
                  | SyncDisable           -- "todo sync disable"
                  | SyncDaemon            -- "todo sync daemon"
+                 | SyncInvite (Maybe Int) -- "todo sync invite [--expires-in HOURS]"
                  deriving (Eq, Show)
 
 data TodoOpts = TodoOpts {
@@ -120,6 +121,7 @@ syncSubcommands = subparser
   <> command "enable" (info (pure SyncEnable) (progDesc "Enable automatic sync"))
   <> command "disable" (info (pure SyncDisable) (progDesc "Disable automatic sync"))
   <> command "daemon" (info (pure SyncDaemon) (progDesc "Run sync daemon (file watcher)"))
+  <> command "invite" (info syncInviteOpts (progDesc "Mint an invite code + QR to onboard another device"))
   )
   where
     syncInitOpts = SyncInit
@@ -130,6 +132,13 @@ syncSubcommands = subparser
          <> metavar "CODE"
          <> help "Invite code for registration"
           )
+    syncInviteOpts = SyncInvite
+      <$> optional (option auto
+          ( long "expires-in"
+         <> short 'e'
+         <> metavar "HOURS"
+         <> help "Hours until the new invite code expires (default: 24)"
+          ))
 
 todoOpts :: Env -> Parser TodoOpts
 todoOpts env = TodoOpts <$> configPathOpt <*> debugOpt <*> verboseOpt <*> (todoCmds env)

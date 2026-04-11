@@ -1,0 +1,49 @@
+# Gradle build outputs — every module grows a build/ tree during
+# assemble/test. Safe to blow away any time.
+build/
+*/build/
+
+# Gradle daemon + worker caches + version-specific tooling bits.
+.gradle/
+
+# Kotlin incremental compiler caches. Re-created automatically.
+.kotlin/
+
+# Android SDK location override. On this project the SDK is wired
+# up through devenv.nix (see ANDROID_HOME), so local.properties
+# should never exist — but some tools still create it as a side
+# effect. Never commit it: it contains an absolute filesystem path
+# that's specific to one developer's machine.
+local.properties
+
+# Android Studio / IntelliJ project metadata. This project is
+# CLI-only (see android/README.md) and we don't want IDE state
+# leaking into git, but if a contributor opens the project in AS
+# anyway, make sure the detritus is ignored.
+.idea/
+*.iml
+*.iws
+*.ipr
+captures/
+.externalNativeBuild/
+.cxx/
+
+# NDK native build temp files. We don't use the NDK but Gradle's
+# Android plugin will create these if a dependency pulls it in.
+.navigation/
+output.json
+
+# Release signing material. Never commit.
+*.jks
+*.keystore
+*.p12
+release/app-release.apk
+release/app-release.aab
+
+# Lint baselines — regenerated on demand.
+lint-baseline.xml
+
+# macOS / editor garbage that can leak through even if the repo
+# root already ignores it.
+.DS_Store
+*.swp

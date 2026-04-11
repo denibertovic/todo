@@ -22,7 +22,9 @@ library
     , containers
     , directory
     , filepath
+    , http-types
     , mtl
+    , network
     , rio
     , servant
     , servant-server
@@ -34,6 +36,7 @@ library
     , warp
   exposed-modules:
       Server
+      Middleware
       Database
       Types
   default-language: Haskell2010
@@ -61,8 +64,49 @@ executable todo-sync-server
     , sqlite-simple
     , text
     , time
+    , todo
     , todo-sync-server
     , uuid
     , wai
     , warp
+  default-language: Haskell2010
+
+test-suite todo-sync-server-test
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  hs-source-dirs:
+      test
+  default-extensions:
+      NoImplicitPrelude
+      OverloadedStrings
+  ghc-options: -Wall -Wcompat -Wincomplete-record-updates -Wincomplete-uni-patterns -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      hspec-discover:hspec-discover
+  build-depends:
+      aeson
+    , base >=4.7 && <5
+    , bytestring
+    , containers
+    , directory
+    , filepath
+    , hspec
+    , hspec-wai
+    , http-types
+    , mtl
+    , network
+    , rio
+    , servant
+    , servant-server
+    , sqlite-simple
+    , temporary
+    , text
+    , time
+    , todo-sync-server
+    , uuid
+    , wai
+    , wai-extra
+  other-modules:
+      Test.DatabaseSpec
+      Test.MiddlewareSpec
+      Test.ServerSpec
   default-language: Haskell2010

@@ -13,6 +13,8 @@ module Types
   , SyncCursor(..)
   , RegisterRequest(..)
   , RegisterResponse(..)
+  , CreateInviteRequest(..)
+  , CreateInviteResponse(..)
   , HealthResponse(..)
     -- * Operation
   , Operation(..)
@@ -211,6 +213,50 @@ instance FromJSON RegisterResponse where
     rresDeviceId  <- o .: "device_id"
     rresAuthToken <- o .: "auth_token"
     return RegisterResponse{..}
+
+-- | @POST /invite@ request body.
+--
+-- Used by an already-registered device to mint a new invite code
+-- without needing admin SSH access to the server. The token in the
+-- @Authorization@ header is what gates this — no request body is
+-- strictly required, but we accept an optional expiry override so
+-- the CLI can issue short-lived codes when handing an invite to a
+-- phone standing next to the laptop.
+data CreateInviteRequest = CreateInviteRequest
+  { cirExpiresInHours :: !(Maybe Int)
+  } deriving (Eq, Show, Generic)
+
+instance ToJSON CreateInviteRequest where
+  toJSON CreateInviteRequest{..} = object
+    [ "expires_in_hours" .= cirExpiresInHours
+    ]
+
+instance FromJSON CreateInviteRequest where
+  parseJSON = withObject "CreateInviteRequest" $ \o -> do
+    cirExpiresInHours <- o .:? "expires_in_hours"
+    return CreateInviteRequest{..}
+
+-- | @POST /invite@ response body. Contains the newly-minted invite
+-- code and its expiry timestamp so the caller can decide how to
+-- display it (the CLI uses both to build a
+-- @todo-sync://register?...@ deeplink and to show a
+-- human-readable expiry).
+data CreateInviteResponse = CreateInviteResponse
+  { cresInviteCode :: !T.Text
+  , cresExpiresAt  :: !UTCTime
+  } deriving (Eq, Show, Generic)
+
+instance ToJSON CreateInviteResponse where
+  toJSON CreateInviteResponse{..} = object
+    [ "invite_code" .= cresInviteCode
+    , "expires_at"  .= cresExpiresAt
+    ]
+
+instance FromJSON CreateInviteResponse where
+  parseJSON = withObject "CreateInviteResponse" $ \o -> do
+    cresInviteCode <- o .: "invite_code"
+    cresExpiresAt  <- o .: "expires_at"
+    return CreateInviteResponse{..}
 
 -- | Health check response
 data HealthResponse = HealthResponse

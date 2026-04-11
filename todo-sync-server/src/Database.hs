@@ -11,6 +11,7 @@ module Database
   , updateDeviceLastSeen
     -- * Invite Code Operations
   , createInviteCode
+  , createInviteCodeWithExpiry
   , registerDeviceWithInviteCode
   , listInviteCodes
     -- * Operation Storage
@@ -246,9 +247,14 @@ getOperationsAfterCursor conn cursor pageSize = do
     decodePayload (_, payload, _) =
       JSON.decode $ BL.fromStrict $ encodeUtf8 payload
 
--- | Create a new invite code with given expiry duration (in seconds)
-createInviteCode :: FilePath -> NominalDiffTime -> IO T.Text
-createInviteCode dbPath expirySeconds = withDb dbPath $ \conn -> do
+-- | Create a new invite code with a given expiry duration and
+-- return both the code and its expiry timestamp. Callers that only
+-- need the code can use 'createInviteCode'.
+createInviteCodeWithExpiry
+  :: FilePath
+  -> NominalDiffTime
+  -> IO (T.Text, UTCTime)
+createInviteCodeWithExpiry dbPath expirySeconds = withDb dbPath $ \conn -> do
   codeUuid <- UUID.nextRandom
   let code = UUID.toText codeUuid
   now <- getCurrentTime
@@ -258,7 +264,15 @@ createInviteCode dbPath expirySeconds = withDb dbPath $ \conn -> do
     "INSERT INTO invite_codes (code, created_at, expires_at) VALUES (?, ?, ?)"
     (code, now, expiresAt)
 
-  return code
+  return (code, expiresAt)
+
+-- | Create a new invite code with given expiry duration (in
+-- seconds). Backwards-compat shim around
+-- 'createInviteCodeWithExpiry' for the admin CLI, which only cares
+-- about the code itself.
+createInviteCode :: FilePath -> NominalDiffTime -> IO T.Text
+createInviteCode dbPath expirySeconds =
+  fst <$> createInviteCodeWithExpiry dbPath expirySeconds
 
 -- | Atomically validate an invite code, create a new device, and
 -- consume the invite code, all inside a single SQLite transaction.

@@ -7,6 +7,8 @@ import           RIO
 import qualified RIO.Text as T
 
 import           Data.Aeson          (decode, encode, eitherDecode)
+import qualified Data.ByteString      as BS
+import qualified Data.ByteString.Lazy as BL
 import qualified Data.Map.Strict     as Map
 import           Data.Time.Calendar  (fromGregorian)
 import           Data.Time.Clock     (UTCTime(..), secondsToDiffTime)
@@ -197,6 +199,41 @@ spec = describe "Sync Types JSON" $ do
             , rresAuthToken = "auth-token-123"
             }
       decode (encode resp) `shouldBe` Just resp
+
+  describe "CreateInviteRequest" $ do
+    it "roundtrips through JSON with expiry override" $ do
+      let req = CreateInviteRequest { cirExpiresInHours = Just 6 }
+      decode (encode req) `shouldBe` Just req
+
+    it "roundtrips through JSON without expiry override" $ do
+      let req = CreateInviteRequest { cirExpiresInHours = Nothing }
+      decode (encode req) `shouldBe` Just req
+
+    it "decodes a body with no fields as Nothing" $ do
+      -- The CLI sends {} when the user doesn't pass --expires-in.
+      -- Make sure the server accepts that without complaining.
+      let result = decode "{}" :: Maybe CreateInviteRequest
+      result `shouldBe` Just (CreateInviteRequest { cirExpiresInHours = Nothing })
+
+  describe "CreateInviteResponse" $ do
+    it "roundtrips through JSON" $ do
+      let resp = CreateInviteResponse
+            { cresInviteCode = "11111111-2222-3333-4444-555555555555"
+            , cresExpiresAt  = time1
+            }
+      decode (encode resp) `shouldBe` Just resp
+
+    it "uses snake_case wire field names" $ do
+      -- Regression guard: the server and Android client both
+      -- expect 'invite_code' / 'expires_at', not the raw Haskell
+      -- field names.
+      let resp = CreateInviteResponse
+            { cresInviteCode = "abc"
+            , cresExpiresAt  = time1
+            }
+          encoded = BL.toStrict $ encode resp
+      BS.isInfixOf "invite_code" encoded `shouldBe` True
+      BS.isInfixOf "expires_at" encoded `shouldBe` True
 
   describe "HealthResponse" $ do
     it "roundtrips through JSON" $ do

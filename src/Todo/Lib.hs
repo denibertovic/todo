@@ -41,15 +41,17 @@ import qualified Forge.Utils        as ForgeUtils
 
 import           Todo.Options
 import           Todo.Parser
+import           Todo.QrRenderer    (buildDeeplink, renderQrInvite)
 import           Todo.Types
 import           Todo.Sync.Types    (SyncRequest(..), SyncResponse(..), RegisterResponse(..),
+                                     CreateInviteResponse(..),
                                      SyncState(..), SyncCursor(..), DeviceId, generateDeviceId)
 import           Todo.Sync.CRDT     (applyOperations, materializeToTodos, mergeOperations,
                                      materialize)
 import           Todo.Sync.Store    (loadSyncState, saveSyncState, initSyncState,
                                      migrateExistingTodos, getSyncDir, ensureSyncDir)
-import           Todo.Sync.Client   (syncAllPages, registerDevice, checkServerHealth,
-                                     SyncError(..))
+import           Todo.Sync.Client   (syncAllPages, registerDevice, createInvite,
+                                     checkServerHealth, SyncError(..))
 import           Todo.Sync.Daemon   (startSyncDaemon, stopSyncDaemon, performSync)
 
 decodeConfig :: FilePath -> IO (Either Y.ParseException TodoConfig)
@@ -91,6 +93,7 @@ entrypoint (TodoOpts configPath debug verbose cmd) = do
       SyncEnable           -> runRIO app $ syncSetEnabled True
       SyncDisable          -> runRIO app $ syncSetEnabled False
       SyncDaemon           -> runRIO app $ runSyncDaemon
+      SyncInvite hours     -> runRIO app $ syncInvite hours
 
 isProject :: String -> Bool
 isProject (x:xs) = case x of
@@ -445,6 +448,52 @@ syncInit serverUrl inviteCode = do
 
       liftIO $ putStrLn "Sync initialized successfully!"
       liftIO $ putStrLn $ "Config updated: " <> cfgPath
+
+-- | Mint a new invite code by asking the already-configured sync
+-- server — no admin SSH required. Authenticated with the local
+-- device's own bearer token.
+--
+-- On success, prints:
+--
+--   1. the invite code itself
+--   2. the todo-sync:\/\/register deeplink (useful if you're copy/
+--      pasting into an Android share sheet)
+--   3. a scannable QR code of that deeplink, rendered directly to
+--      the terminal using Unicode half-blocks
+--
+-- The Android onboarding screen's "Scan QR" button consumes the
+-- deeplink and pre-fills both the server URL and invite code
+-- fields, so the flow on the phone side is a one-tap confirm.
+syncInvite :: (HasLogFunc env, HasConfig env) => Maybe Int -> RIO env ()
+syncInvite hoursOverride = do
+  env <- ask
+  let sc = todoSync (env ^. configL)
+  when (not (syncEnabled sc)) $
+    liftIO $ die "Sync is not configured. Run `todo sync init` first."
+  let serverUrl = syncServerUrl sc
+  authToken <- case syncAuthToken sc of
+    Just t | not (T.null t) -> return t
+    _ -> liftIO $ die "No auth token in config. Run `todo sync init` to register this device first."
+
+  result <- liftIO $ createInvite serverUrl authToken hoursOverride
+  case result of
+    Left err -> liftIO $ die $ "Failed to create invite: " <> show err
+    Right CreateInviteResponse{..} -> do
+      let deeplink = buildDeeplink serverUrl cresInviteCode
+      liftIO $ putStrLn ""
+      liftIO $ putStrLn $ "Invite code: " <> T.unpack cresInviteCode
+      liftIO $ putStrLn $ "Expires at:  " <> show cresExpiresAt
+      liftIO $ putStrLn ""
+      liftIO $ putStrLn "Deeplink URL:"
+      liftIO $ putStrLn $ "  " <> T.unpack deeplink
+      liftIO $ putStrLn ""
+      case renderQrInvite deeplink of
+        Right qr -> do
+          liftIO $ putStrLn "Scan this QR code with the Android app:"
+          liftIO $ putStrLn ""
+          liftIO $ putStrLn $ T.unpack qr
+        Left err ->
+          liftIO $ putStrLn $ "Failed to render QR: " <> T.unpack err
 
 -- | Update the config file with sync settings
 updateConfigWithSync :: FilePath -> T.Text -> T.Text -> T.Text -> IO ()

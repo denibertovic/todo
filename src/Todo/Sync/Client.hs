@@ -7,6 +7,7 @@ module Todo.Sync.Client
     syncWithServer
   , syncAllPages
   , registerDevice
+  , createInvite
   , checkServerHealth
     -- * Client Types
   , SyncError(..)
@@ -138,6 +139,38 @@ registerDevice serverUrl deviceName inviteCode = do
         else if status == 403
           then return $ Left $ AuthError "Invalid or expired invite code"
           else return $ Left $ ServerError status $ T.pack $ show body
+
+-- | Ask an already-configured sync server to mint a new invite
+-- code on our behalf. Authenticated with the CLI's own bearer
+-- token, so this only works after the CLI has been registered via
+-- 'registerDevice' (either using an admin-minted bootstrap invite
+-- code, or using a fresh invite minted by another already-
+-- registered device via this same endpoint).
+createInvite
+  :: T.Text                 -- ^ Server URL
+  -> T.Text                 -- ^ Auth token
+  -> Maybe Int              -- ^ Expiry override in hours
+  -> IO (SyncResult CreateInviteResponse)
+createInvite serverUrl authToken expiresInHours = do
+  manager <- createManager
+  let body = CreateInviteRequest { cirExpiresInHours = expiresInHours }
+  result <- try $ do
+    req <- buildRequest serverUrl "/invite" (Just authToken) (encode body)
+    resp <- httpLbs req manager
+    return resp
+  case result of
+    Left (e :: SomeException) ->
+      return $ Left $ NetworkError $ T.pack $ show e
+    Right resp -> do
+      let status = statusCode $ responseStatus resp
+          body'  = responseBody resp
+      if status == 200
+        then case eitherDecode body' of
+          Right inviteResp -> return $ Right inviteResp
+          Left err         -> return $ Left $ ParseError $ T.pack err
+        else if status == 401
+          then return $ Left $ AuthError "Invalid or missing auth token"
+          else return $ Left $ ServerError status $ T.pack $ show body'
 
 -- | Check if the server is healthy
 checkServerHealth

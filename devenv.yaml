@@ -8,8 +8,9 @@ inputs:
     inputs:
       nixpkgs:
         follows: nixpkgs
-# If you're using non-OSS software, you can set allowUnfree to true.
-# allowUnfree: true
+# Needed for the Android SDK (Google's Android toolchain ships
+# under an EULA that nixpkgs classifies as unfree).
+allowUnfree: true
 
 # If you're willing to use a package that's vulnerable
 # permittedInsecurePackages:

@@ -1,0 +1,19 @@
+{
+  "device_id": "37b303d6-51e9-42da-94bf-01425d4c85dd",
+  "item": {
+    "completed_at": null,
+    "created_at": null,
+    "description": "hello from android",
+    "metadata": [
+      {
+        "project": "todo",
+        "type": "project"
+      }
+    ],
+    "priority": "A"
+  },
+  "item_id": "dc5141d6-8cea-40e4-99ff-378eadd259e3",
+  "op_id": "df15d41c-2583-4c47-91d5-13eeb0fb8664",
+  "timestamp": "2026-04-11T12:00:00Z",
+  "type": "add"
+}

@@ -12,12 +12,16 @@ import           Prelude                 (putStrLn)
 
 import           Database
 import           Server
+import           Todo.QrRenderer         (buildDeeplink, renderQrInvite)
 import           Types
 
 -- | Command type
 data Command
   = Serve !Int !FilePath
-  | GenerateInviteCode !FilePath !Int  -- db path, expiry hours
+  | GenerateInviteCode !FilePath !Int !(Maybe T.Text)
+  -- ^ db path, expiry hours, optional server URL. When the server
+  -- URL is present the command also prints the full
+  -- todo-sync://register deeplink and a scannable QR code.
   | ListInviteCodes !FilePath
   deriving (Eq, Show)
 
@@ -54,6 +58,14 @@ generateInviteParser = GenerateInviteCode
      <> value 24
      <> help "Hours until invite code expires (default: 24)"
       )
+  <*> optional (strOption
+      ( long "server-url"
+     <> short 's'
+     <> metavar "URL"
+     <> help "Public server URL. When set, the command also prints the \
+             \todo-sync:// deeplink and a scannable QR code the Android \
+             \app can read directly from the terminal."
+      ))
 
 -- | Parse list-invite-codes command
 listInvitesParser :: Parser Command
@@ -97,13 +109,31 @@ main = do
             }
       runServer config
 
-    GenerateInviteCode dbPath expiryHours -> do
+    GenerateInviteCode dbPath expiryHours mServerUrl -> do
       -- Initialize database first
       initDatabase dbPath
       let expirySeconds = fromIntegral (expiryHours * 3600) :: NominalDiffTime
       code <- createInviteCode dbPath expirySeconds
       putStrLn $ "Invite code: " <> T.unpack code
       putStrLn $ "Expires in: " <> show expiryHours <> " hours"
+      -- If the operator passed a public server URL, also print the
+      -- todo-sync://register deeplink and a scannable QR code so
+      -- the Android onboarding flow is a one-scan operation.
+      case mServerUrl of
+        Nothing -> return ()
+        Just url -> do
+          let deeplink = buildDeeplink url code
+          putStrLn ""
+          putStrLn "Deeplink URL:"
+          putStrLn $ "  " <> T.unpack deeplink
+          putStrLn ""
+          case renderQrInvite deeplink of
+            Right qr -> do
+              putStrLn "Scan this QR code with the Android app:"
+              putStrLn ""
+              putStrLn $ T.unpack qr
+            Left err ->
+              putStrLn $ "Failed to render QR: " <> T.unpack err
 
     ListInviteCodes dbPath -> do
       codes <- listInviteCodes dbPath
