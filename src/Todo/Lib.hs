@@ -596,10 +596,13 @@ syncNow = do
           -- Save state
           liftIO $ saveSyncState dir newState
 
-          -- Write updated todos to file
+          -- Write updated todos to file (never overwrite with empty)
           let todos = materializeToTodos newItems
-          liftIO $ backupFile (todoFile c)
-          liftIO $ TIO.writeFile (todoFile c) $ T.pack $ show todos
+          if null todos
+            then liftIO $ putStrLn $ "WARNING: materializeToTodos returned 0 items (newItems: " <> show (Map.size newItems) <> "), refusing to overwrite todo.txt"
+            else do
+              liftIO $ backupFile (todoFile c)
+              liftIO $ TIO.writeFile (todoFile c) $ T.pack $ show todos
 
           liftIO $ putStrLn $ "Sync complete!"
           liftIO $ putStrLn $ "  Sent:     " <> show (length pendingOps) <> " operations"

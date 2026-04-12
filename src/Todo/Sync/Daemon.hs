@@ -284,9 +284,11 @@ doSync config stateTVar lastContentTVar = do
           atomically $ writeTVar stateTVar newState
           saveSyncState (todoDir config) newState
 
-          -- Write updated todos back to file
+          -- Write updated todos back to file (never overwrite with empty)
           let todos = materializeToTodos (ssItems newState)
-          TIO.writeFile (todoFile config) $ T.pack $ show todos
+          if null todos
+            then putStrLn $ "WARNING: materializeToTodos returned 0 items (ssItems: " <> show (length (ssItems newState)) <> "), refusing to overwrite todo.txt"
+            else TIO.writeFile (todoFile config) $ T.pack $ show todos
 
           -- Update last content to avoid triggering file watcher
           newContent <- TIO.readFile (todoFile config)
