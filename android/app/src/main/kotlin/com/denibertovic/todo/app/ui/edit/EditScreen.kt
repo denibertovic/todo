@@ -50,65 +50,36 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import com.denibertovic.todo.app.TodoApplication
-import com.denibertovic.todo.app.data.decodeMetadata
-import com.denibertovic.todo.core.parser.TodoParser
-import com.denibertovic.todo.core.types.Context
-import com.denibertovic.todo.core.types.ItemId
+import com.denibertovic.todo.app.data.displayMetadata
 import com.denibertovic.todo.core.types.Metadata
 import com.denibertovic.todo.core.types.Priority
-import com.denibertovic.todo.core.types.Project
-import com.denibertovic.todo.core.types.Tag
-import com.denibertovic.todo.core.types.TodoItem
-import com.denibertovic.todo.core.types.renderItem
-import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
-import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EditScreen(
-    app: TodoApplication,
-    itemId: String?,
+    viewModel: EditViewModel,
     onDone: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
 
-    var description by remember { mutableStateOf("") }
-    var priority by remember { mutableStateOf<Priority?>(null) }
-    val itemProjects = remember { mutableStateListOf<String>() }
-    val itemContexts = remember { mutableStateListOf<String>() }
-    var dueDate by remember { mutableStateOf<LocalDate?>(null) }
-
-    var showPrioritySheet by remember { mutableStateOf(false) }
-    var showProjectSheet by remember { mutableStateOf(false) }
-    var showContextSheet by remember { mutableStateOf(false) }
-    var showDatePicker by remember { mutableStateOf(false) }
-
-    var showRaw by remember { mutableStateOf(false) }
-    var rawText by remember { mutableStateOf("") }
-
-    val allItems by app.database.itemCacheDao().observeVisible().collectAsState(initial = emptyList())
+    val allItems by viewModel.allItems.collectAsState()
     val (allProjects, allContexts) = remember(allItems) {
         val p = sortedSetOf<String>()
         val c = sortedSetOf<String>()
         for (item in allItems) {
-            for (m in item.decodeMetadata()) {
+            for (m in item.displayMetadata()) {
                 when (m) {
                     is Metadata.ProjectM -> p.add(m.project.name)
                     is Metadata.ContextM -> c.add(m.context.name)
@@ -119,61 +90,20 @@ fun EditScreen(
         p.toList() to c.toList()
     }
 
-    fun buildItem(): TodoItem {
-        val metadata = buildList {
-            itemProjects.forEach { add(Metadata.ProjectM(Project(it))) }
-            itemContexts.forEach { add(Metadata.ContextM(Context(it))) }
-            dueDate?.let { add(Metadata.TagM(Tag.DueDate(it))) }
-        }
-        return TodoItem(
-            priority = priority,
-            description = description.trim(),
-            metadata = metadata,
-        )
+    LaunchedEffect(viewModel.isNew) {
+        if (viewModel.isNew) focusRequester.requestFocus()
     }
 
-    fun syncToRaw() { rawText = buildItem().renderItem() }
-
-    fun syncFromRaw() {
-        val parsed = TodoParser.parseLine(rawText).getOrNull() ?: return
-        val item = parsed.item
-        description = item.description
-        priority = item.priority
-        itemProjects.clear()
-        itemProjects.addAll(item.metadata.filterIsInstance<Metadata.ProjectM>().map { it.project.name })
-        itemContexts.clear()
-        itemContexts.addAll(item.metadata.filterIsInstance<Metadata.ContextM>().map { it.context.name })
-        dueDate = item.metadata.firstNotNullOfOrNull { md ->
-            (md as? Metadata.TagM)?.tag?.let { it as? Tag.DueDate }?.date
-        }
-    }
-
-    LaunchedEffect(itemId) {
-        if (itemId != null) {
-            val row = app.database.itemCacheDao().getById(itemId) ?: return@LaunchedEffect
-            val metadata = row.decodeMetadata()
-            description = row.description
-            priority = row.priority?.let { Priority.fromLetter(it[0]) }
-            itemProjects.addAll(metadata.filterIsInstance<Metadata.ProjectM>().map { it.project.name })
-            itemContexts.addAll(metadata.filterIsInstance<Metadata.ContextM>().map { it.context.name })
-            dueDate = metadata.firstNotNullOfOrNull { md ->
-                (md as? Metadata.TagM)?.tag?.let { it as? Tag.DueDate }?.date
-            }
-        }
-    }
-
-    LaunchedEffect(itemId) {
-        if (itemId == null) focusRequester.requestFocus()
-    }
-
-    val canSave = description.isNotBlank()
+    var showPrioritySheet by remember { mutableStateOf(false) }
+    var showProjectSheet by remember { mutableStateOf(false) }
+    var showContextSheet by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     // Priority sheet
     if (showPrioritySheet) {
-        val sheetState = rememberModalBottomSheetState()
         ModalBottomSheet(
             onDismissRequest = { showPrioritySheet = false },
-            sheetState = sheetState,
+            sheetState = rememberModalBottomSheetState(),
         ) {
             Column(
                 modifier = Modifier
@@ -183,15 +113,13 @@ fun EditScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("Priority", style = MaterialTheme.typography.titleLarge)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val options = listOf(null) + Priority.entries.take(6) // A-F
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val options = listOf(null) + Priority.entries.take(6)
                     options.forEach { p ->
                         FilterChip(
-                            selected = priority == p,
+                            selected = viewModel.priority == p,
                             onClick = {
-                                priority = p
+                                viewModel.priority = p
                                 showPrioritySheet = false
                             },
                             label = { Text(p?.name ?: "None") },
@@ -206,10 +134,10 @@ fun EditScreen(
     if (showProjectSheet) {
         PickerSheet(
             title = "Projects",
-            available = allProjects.filter { it !in itemProjects },
-            selected = itemProjects.toList(),
-            onAdd = { itemProjects.add(it) },
-            onRemove = { itemProjects.remove(it) },
+            available = allProjects.filter { it !in viewModel.itemProjects },
+            selected = viewModel.itemProjects.toList(),
+            onAdd = { viewModel.itemProjects.add(it) },
+            onRemove = { viewModel.itemProjects.remove(it) },
             onDismiss = { showProjectSheet = false },
             prefix = "+",
             newLabel = "New project",
@@ -220,10 +148,10 @@ fun EditScreen(
     if (showContextSheet) {
         PickerSheet(
             title = "Contexts",
-            available = allContexts.filter { it !in itemContexts },
-            selected = itemContexts.toList(),
-            onAdd = { itemContexts.add(it) },
-            onRemove = { itemContexts.remove(it) },
+            available = allContexts.filter { it !in viewModel.itemContexts },
+            selected = viewModel.itemContexts.toList(),
+            onAdd = { viewModel.itemContexts.add(it) },
+            onRemove = { viewModel.itemContexts.remove(it) },
             onDismiss = { showContextSheet = false },
             prefix = "@",
             newLabel = "New context",
@@ -233,7 +161,7 @@ fun EditScreen(
     // Date picker
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = dueDate?.let {
+            initialSelectedDateMillis = viewModel.dueDate?.let {
                 it.toEpochDays().toLong() * 86400000L
             }
         )
@@ -242,7 +170,7 @@ fun EditScreen(
             confirmButton = {
                 TextButton(onClick = {
                     datePickerState.selectedDateMillis?.let { millis ->
-                        dueDate = Instant.fromEpochMilliseconds(millis)
+                        viewModel.dueDate = Instant.fromEpochMilliseconds(millis)
                             .toLocalDateTime(TimeZone.UTC).date
                     }
                     showDatePicker = false
@@ -250,9 +178,9 @@ fun EditScreen(
             },
             dismissButton = {
                 Row {
-                    if (dueDate != null) {
+                    if (viewModel.dueDate != null) {
                         TextButton(onClick = {
-                            dueDate = null
+                            viewModel.dueDate = null
                             showDatePicker = false
                         }) { Text("Clear") }
                     }
@@ -272,34 +200,14 @@ fun EditScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
-                title = { Text(if (itemId == null) "New todo" else "Edit todo") },
+                title = { Text(if (viewModel.isNew) "New todo" else "Edit todo") },
                 actions = {
-                    IconButton(onClick = {
-                        if (!showRaw) syncToRaw()
-                        showRaw = !showRaw
-                        if (!showRaw) syncFromRaw()
-                    }) {
+                    IconButton(onClick = viewModel::toggleRawEditor) {
                         Icon(Icons.Default.Code, contentDescription = "Toggle raw editor")
                     }
                     TextButton(
-                        enabled = canSave,
-                        onClick = {
-                            val item = buildItem()
-                            scope.launch {
-                                if (itemId == null) {
-                                    app.todoActions.add(item)
-                                } else {
-                                    val id = ItemId.parse(itemId)
-                                    val fullText = item.renderItem()
-                                    val reparsed = TodoParser.parseLine(fullText).getOrNull()
-                                    if (reparsed != null) {
-                                        app.todoActions.modifyDescription(id, reparsed.item.description)
-                                        app.todoActions.setPriority(id, reparsed.item.priority)
-                                    }
-                                }
-                                onDone()
-                            }
-                        },
+                        enabled = viewModel.canSave,
+                        onClick = { viewModel.save(onDone) },
                     ) { Text("Save") }
                 },
             )
@@ -315,11 +223,15 @@ fun EditScreen(
         ) {
             Spacer(Modifier.height(4.dp))
 
+            viewModel.error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error)
+            }
+
             // Raw editor (toggleable)
-            AnimatedVisibility(visible = showRaw) {
+            AnimatedVisibility(visible = viewModel.showRaw) {
                 OutlinedTextField(
-                    value = rawText,
-                    onValueChange = { rawText = it },
+                    value = viewModel.rawText,
+                    onValueChange = { viewModel.rawText = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Raw todo.txt") },
                     placeholder = { Text("(A) buy milk +groceries @store due:2026-04-20") },
@@ -329,12 +241,11 @@ fun EditScreen(
             }
 
             // Structured editor
-            AnimatedVisibility(visible = !showRaw) {
+            AnimatedVisibility(visible = !viewModel.showRaw) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // Description
                     OutlinedTextField(
-                        value = description,
-                        onValueChange = { description = it },
+                        value = viewModel.description,
+                        onValueChange = { viewModel.description = it },
                         modifier = Modifier
                             .fillMaxWidth()
                             .focusRequester(focusRequester),
@@ -353,16 +264,16 @@ fun EditScreen(
                         MetadataCard(
                             icon = Icons.Default.Flag,
                             label = "Priority",
-                            value = priority?.name,
-                            isSet = priority != null,
+                            value = viewModel.priority?.name,
+                            isSet = viewModel.priority != null,
                             onClick = { showPrioritySheet = true },
                             modifier = Modifier.weight(1f),
                         )
                         MetadataCard(
                             icon = Icons.Default.FolderOpen,
                             label = "Project",
-                            value = if (itemProjects.isNotEmpty()) itemProjects.joinToString(", ") { "+$it" } else null,
-                            isSet = itemProjects.isNotEmpty(),
+                            value = if (viewModel.itemProjects.isNotEmpty()) viewModel.itemProjects.joinToString(", ") { "+$it" } else null,
+                            isSet = viewModel.itemProjects.isNotEmpty(),
                             onClick = { showProjectSheet = true },
                             modifier = Modifier.weight(1f),
                         )
@@ -374,16 +285,16 @@ fun EditScreen(
                         MetadataCard(
                             icon = Icons.AutoMirrored.Filled.Label,
                             label = "Context",
-                            value = if (itemContexts.isNotEmpty()) itemContexts.joinToString(", ") { "@$it" } else null,
-                            isSet = itemContexts.isNotEmpty(),
+                            value = if (viewModel.itemContexts.isNotEmpty()) viewModel.itemContexts.joinToString(", ") { "@$it" } else null,
+                            isSet = viewModel.itemContexts.isNotEmpty(),
                             onClick = { showContextSheet = true },
                             modifier = Modifier.weight(1f),
                         )
                         MetadataCard(
                             icon = Icons.Default.CalendarMonth,
                             label = "Due date",
-                            value = dueDate?.toString(),
-                            isSet = dueDate != null,
+                            value = viewModel.dueDate?.toString(),
+                            isSet = viewModel.dueDate != null,
                             onClick = { showDatePicker = true },
                             modifier = Modifier.weight(1f),
                         )
@@ -417,9 +328,7 @@ private fun MetadataCard(
     Card(
         onClick = onClick,
         modifier = modifier.height(88.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = containerColor,
-        ),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
     ) {
         Column(
             modifier = Modifier
@@ -427,12 +336,7 @@ private fun MetadataCard(
                 .padding(12.dp),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = contentColor,
-                modifier = Modifier.size(24.dp),
-            )
+            Icon(icon, contentDescription = null, tint = contentColor, modifier = Modifier.size(24.dp))
             Column {
                 Text(
                     text = value ?: "Not set",
@@ -462,12 +366,11 @@ private fun PickerSheet(
     prefix: String,
     newLabel: String,
 ) {
-    val sheetState = rememberModalBottomSheetState()
     var newValue by remember { mutableStateOf("") }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
+        sheetState = rememberModalBottomSheetState(),
     ) {
         Column(
             modifier = Modifier

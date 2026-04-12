@@ -47,7 +47,10 @@ abstract class TodoDatabase : RoomDatabase() {
 
         /** For testing / wipe-local-state — tears down the singleton. */
         fun reset() {
-            synchronized(this) { instance = null }
+            synchronized(this) {
+                instance?.close()
+                instance = null
+            }
         }
     }
 }

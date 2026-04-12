@@ -5,25 +5,22 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.navigation.NavHostController
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.denibertovic.todo.app.PrefilledRegistration
 import com.denibertovic.todo.app.TodoApplication
 import com.denibertovic.todo.app.ui.edit.EditScreen
+import com.denibertovic.todo.app.ui.edit.EditViewModel
 import com.denibertovic.todo.app.ui.list.ListScreen
+import com.denibertovic.todo.app.ui.list.ListViewModel
 import com.denibertovic.todo.app.ui.onboarding.OnboardingScreen
+import com.denibertovic.todo.app.ui.onboarding.OnboardingViewModel
 import com.denibertovic.todo.app.ui.settings.SettingsScreen
-import kotlinx.coroutines.launch
+import com.denibertovic.todo.app.ui.settings.SettingsViewModel
 
-/**
- * Destination names used across the app. Kept as top-level constants
- * rather than an enum because route strings can carry path arguments
- * (`edit/{itemId}`) and enums don't compose well with that.
- */
 object Routes {
     const val ONBOARDING = "onboarding"
     const val LIST = "list"
@@ -41,27 +38,23 @@ fun TodoNavHost(
     onPrefillConsumed: () -> Unit,
 ) {
     val nav = rememberNavController()
-    val scope = rememberCoroutineScope()
 
-    // First-launch gating: if no device has been registered yet,
-    // force-route into onboarding. After a successful registration
-    // the start destination flips to `list` so we don't bounce the
-    // user back through onboarding on every cold start.
     var startDestination by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         startDestination = if (app.registrationRepository.isRegistered()) Routes.LIST else Routes.ONBOARDING
     }
     val start = startDestination ?: return
 
-    NavHost(
-        navController = nav,
-        startDestination = start,
-    ) {
+    NavHost(navController = nav, startDestination = start) {
         composable(Routes.ONBOARDING) {
+            val vm: OnboardingViewModel = viewModel(
+                factory = OnboardingViewModel.Factory(app, prefilledRegistration),
+            )
+            LaunchedEffect(prefilledRegistration) {
+                if (prefilledRegistration != null) onPrefillConsumed()
+            }
             OnboardingScreen(
-                app = app,
-                prefilled = prefilledRegistration,
-                onPrefillConsumed = onPrefillConsumed,
+                viewModel = vm,
                 onRegistered = {
                     nav.navigate(Routes.LIST) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
@@ -71,8 +64,9 @@ fun TodoNavHost(
         }
 
         composable(Routes.LIST) {
+            val vm: ListViewModel = viewModel(factory = ListViewModel.Factory(app))
             ListScreen(
-                app = app,
+                viewModel = vm,
                 onEditItem = { itemId -> nav.navigate(Routes.editExisting(itemId)) },
                 onNewItem = { nav.navigate(Routes.EDIT_NEW) },
                 onOpenSettings = { nav.navigate(Routes.SETTINGS) },
@@ -80,25 +74,20 @@ fun TodoNavHost(
         }
 
         composable(Routes.EDIT_NEW) {
-            EditScreen(
-                app = app,
-                itemId = null,
-                onDone = { nav.popBackStack() },
-            )
+            val vm: EditViewModel = viewModel(factory = EditViewModel.Factory(app, null))
+            EditScreen(viewModel = vm, onDone = { nav.popBackStack() })
         }
 
         composable(Routes.EDIT) { backStack ->
             val itemId = backStack.arguments?.getString("itemId")
-            EditScreen(
-                app = app,
-                itemId = itemId,
-                onDone = { nav.popBackStack() },
-            )
+            val vm: EditViewModel = viewModel(factory = EditViewModel.Factory(app, itemId))
+            EditScreen(viewModel = vm, onDone = { nav.popBackStack() })
         }
 
         composable(Routes.SETTINGS) {
+            val vm: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory(app))
             SettingsScreen(
-                app = app,
+                viewModel = vm,
                 onBack = { nav.popBackStack() },
                 onWiped = {
                     nav.navigate(Routes.ONBOARDING) {

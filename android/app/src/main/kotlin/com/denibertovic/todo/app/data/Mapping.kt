@@ -6,6 +6,7 @@ import com.denibertovic.todo.core.crdt.Operation
 import com.denibertovic.todo.core.crdt.SyncItem
 import com.denibertovic.todo.core.json.TodoJson
 import com.denibertovic.todo.core.types.Metadata
+import com.denibertovic.todo.core.parser.TodoParser
 import com.denibertovic.todo.core.types.Priority
 import com.denibertovic.todo.core.types.TodoItem
 import kotlinx.serialization.builtins.ListSerializer
@@ -61,3 +62,31 @@ fun ItemCacheEntity.toTodoItem(): TodoItem = TodoItem(
     description = description,
     metadata = decodeMetadata(),
 )
+
+/**
+ * Extract the plain-text description from a cache entity, stripping any
+ * metadata tokens that may have been inlined by the edit screen. For items
+ * that have never been edited the description is already clean.
+ */
+fun ItemCacheEntity.displayDescription(): String {
+    val line = buildString {
+        priority?.let { append("($it) ") }
+        append(description)
+    }
+    return TodoParser.parseLine(line).getOrNull()?.item?.description ?: description
+}
+
+/**
+ * Resolve the current metadata for a cache entity. When an item has been
+ * edited, metadata tokens live inside the description string (the CRDT has
+ * no dedicated metadata-update operation). We parse the description first
+ * and fall back to the original [metadataJson] from the Add operation.
+ */
+fun ItemCacheEntity.displayMetadata(): List<Metadata> {
+    val line = buildString {
+        priority?.let { append("($it) ") }
+        append(description)
+    }
+    val inlineMeta = TodoParser.parseLine(line).getOrNull()?.item?.metadata ?: emptyList()
+    return inlineMeta.ifEmpty { decodeMetadata() }
+}

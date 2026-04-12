@@ -16,26 +16,22 @@ import java.util.concurrent.TimeUnit
  * Wraps WorkManager with the two sync flavors the app uses:
  *
  * - **Periodic**: a 15-minute heartbeat to catch remote changes
- *   when the app hasn't been opened in a while. Needs network,
- *   backs off on failure.
- * - **Expedited one-shot**: fired after every local mutation
- *   (`TodoActions.*`) and on app resume. Uses
- *   `OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST` so it
- *   degrades gracefully when we've burned through the expedited
- *   budget.
+ *   when the app hasn't been opened in a while.
+ * - **Expedited one-shot**: fired after every local mutation and on
+ *   app resume.
  *
- * Both jobs share the same network-required constraint so we don't
- * spin up a worker just to immediately crash on
- * `ConnectException`.
+ * Both use the same [SyncWorker] class — WorkManager differentiates
+ * them by their unique work name, not the worker class.
  */
 class SyncScheduler(private val context: Context) {
 
+    private val networkConstraints = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
+        .build()
+
     fun enqueuePeriodicSync() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val request = PeriodicWorkRequestBuilder<PeriodicSyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(constraints)
+        val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
+            .setConstraints(networkConstraints)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
@@ -46,11 +42,8 @@ class SyncScheduler(private val context: Context) {
     }
 
     fun enqueueExpeditedSync() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val request = OneTimeWorkRequestBuilder<ExpeditedSyncWorker>()
-            .setConstraints(constraints)
+        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(networkConstraints)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
             .build()
