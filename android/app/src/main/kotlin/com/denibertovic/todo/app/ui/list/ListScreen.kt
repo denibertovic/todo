@@ -23,13 +23,20 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.denibertovic.todo.app.TodoApplication
+import com.denibertovic.todo.app.data.SyncRepository
 import com.denibertovic.todo.app.data.db.ItemCacheEntity
 import com.denibertovic.todo.app.data.decodeMetadata
 import com.denibertovic.todo.core.types.Context
@@ -68,6 +76,8 @@ fun ListScreen(
 ) {
     val items by app.database.itemCacheDao().observeVisible().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
+    var isRefreshing by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Extract unique projects and contexts across the current item
     // set. These are the pool from which filter chips are drawn.
@@ -76,18 +86,24 @@ fun ListScreen(
     // Local filter state. Multi-select: AND between categories, OR
     // within a category — matching the CLI's `hasProjAndCtx`
     // semantics in `src/Todo/Lib.hs:159-167`.
-    val selectedProjects = remember { mutableSetOf<String>() }
-    val selectedContexts = remember { mutableSetOf<String>() }
+    // SnapshotStateList so Compose recomposes on add/remove.
+    val selectedProjects = remember { mutableStateListOf<String>() }
+    val selectedContexts = remember { mutableStateListOf<String>() }
 
-    val filtered = remember(items, selectedProjects, selectedContexts) {
-        items.filter { matchesFilters(it, selectedProjects, selectedContexts) }
+    val filtered = remember(items, selectedProjects.toList(), selectedContexts.toList()) {
+        items.filter { matchesFilters(it, selectedProjects.toSet(), selectedContexts.toSet()) }
             .sortedWith(listOrdering)
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Todos") },
+                title = {
+                    val hasFilters = selectedProjects.isNotEmpty() || selectedContexts.isNotEmpty()
+                    val label = if (hasFilters) "Todos (${filtered.size}/${items.size})" else "Todos (${items.size})"
+                    Text(label)
+                },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
@@ -101,55 +117,76 @@ fun ListScreen(
             }
         },
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            // Filter chips. Re-render when the item set changes so
-            // new projects/contexts become available immediately.
-            if (projects.isNotEmpty() || contexts.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    projects.forEach { p ->
-                        val selected = p in selectedProjects
-                        FilterChip(
-                            selected = selected,
-                            onClick = {
-                                if (selected) selectedProjects.remove(p)
-                                else selectedProjects.add(p)
-                            },
-                            label = { Text("+$p") },
-                        )
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = {
+                isRefreshing = true
+                scope.launch {
+                    val result = app.syncRepository.sync()
+                    isRefreshing = false
+                    val message = when (result) {
+                        is SyncRepository.Result.Success ->
+                            "Synced: ${result.sent} sent, ${result.received} received"
+                        is SyncRepository.Result.NotRegistered ->
+                            "Not registered with sync server"
+                        is SyncRepository.Result.Failure ->
+                            "Sync failed: ${result.error.message}"
                     }
-                    contexts.forEach { c ->
-                        val selected = c in selectedContexts
-                        FilterChip(
-                            selected = selected,
-                            onClick = {
-                                if (selected) selectedContexts.remove(c)
-                                else selectedContexts.add(c)
-                            },
-                            label = { Text("@$c") },
-                        )
+                    snackbarHostState.showSnackbar(message)
+                }
+            },
+            modifier = Modifier.padding(padding).fillMaxSize(),
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Filter chips. Re-render when the item set changes so
+                // new projects/contexts become available immediately.
+                if (projects.isNotEmpty() || contexts.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        projects.forEach { p ->
+                            val selected = p in selectedProjects
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    if (selected) selectedProjects.remove(p)
+                                    else selectedProjects.add(p)
+                                },
+                                label = { Text("+$p") },
+                            )
+                        }
+                        contexts.forEach { c ->
+                            val selected = c in selectedContexts
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    if (selected) selectedContexts.remove(c)
+                                    else selectedContexts.add(c)
+                                },
+                                label = { Text("@$c") },
+                            )
+                        }
                     }
                 }
-            }
 
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(filtered, key = { it.itemId }) { item ->
-                    TodoRow(
-                        item = item,
-                        onToggleComplete = { completed ->
-                            scope.launch {
-                                val id = ItemId.parse(item.itemId)
-                                if (completed) app.todoActions.complete(id)
-                                else app.todoActions.uncomplete(id)
-                            }
-                        },
-                        onTap = { onEditItem(item.itemId) },
-                    )
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(filtered, key = { it.itemId }) { item ->
+                        TodoRow(
+                            item = item,
+                            onToggleComplete = { completed ->
+                                scope.launch {
+                                    val id = ItemId.parse(item.itemId)
+                                    if (completed) app.todoActions.complete(id)
+                                    else app.todoActions.uncomplete(id)
+                                }
+                            },
+                            onTap = { onEditItem(item.itemId) },
+                        )
+                    }
                 }
             }
         }
