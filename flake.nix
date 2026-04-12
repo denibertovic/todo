@@ -23,6 +23,7 @@
         haskellPackages = pkgs.haskellPackages.override {
           overrides = self: super: {
             forge = forge.packages.${system}.forge;
+            qrcode-core = pkgs.haskell.lib.markUnbroken super.qrcode-core;
           };
         };
 
@@ -49,5 +50,17 @@
           ];
         };
       }
-    );
+    )
+    //
+    {
+      nixosModules = {
+        todo-sync-server = import ./nixos/module.nix { inherit self; };
+        default = self.nixosModules.todo-sync-server;
+      };
+
+      homeManagerModules = {
+        todo-sync = import ./nixos/home-manager.nix { inherit self; };
+        default = self.homeManagerModules.todo-sync;
+      };
+    };
 }
