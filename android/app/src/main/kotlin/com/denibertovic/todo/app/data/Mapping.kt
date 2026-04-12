@@ -6,6 +6,8 @@ import com.denibertovic.todo.core.crdt.Operation
 import com.denibertovic.todo.core.crdt.SyncItem
 import com.denibertovic.todo.core.json.TodoJson
 import com.denibertovic.todo.core.types.Metadata
+import com.denibertovic.todo.core.types.Priority
+import com.denibertovic.todo.core.types.TodoItem
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 
@@ -53,3 +55,9 @@ fun SyncItem.toCacheEntity(): ItemCacheEntity = ItemCacheEntity(
 fun ItemCacheEntity.decodeMetadata(): List<Metadata> =
     if (metadataJson.isBlank()) emptyList()
     else TodoJson.decodeFromString(metadataListSerializer, metadataJson)
+
+fun ItemCacheEntity.toTodoItem(): TodoItem = TodoItem(
+    priority = priority?.firstOrNull()?.let { Priority.fromLetter(it) },
+    description = description,
+    metadata = decodeMetadata(),
+)
