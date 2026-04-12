@@ -23,7 +23,7 @@
         haskellPackages = pkgs.haskellPackages.override {
           overrides = self: super: {
             forge = forge.packages.${system}.forge;
-            qrcode-core = pkgs.haskell.lib.markUnbroken super.qrcode-core;
+            qrcode-core = pkgs.haskell.lib.doJailbreak (pkgs.haskell.lib.markUnbroken super.qrcode-core);
           };
         };
 
