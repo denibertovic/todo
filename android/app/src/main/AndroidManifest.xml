@@ -15,6 +15,8 @@
     <application
         android:name=".TodoApplication"
         android:label="Todo"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.Todo"
         android:supportsRtl="true"
         android:allowBackup="true"
