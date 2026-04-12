@@ -28,7 +28,7 @@
         };
 
         todo = haskellPackages.callCabal2nix "todo" ./. {};
-        todo-sync-server = haskellPackages.callCabal2nix "todo-sync-server" ./todo-sync-server {};
+        todo-sync-server = haskellPackages.callCabal2nix "todo-sync-server" ./todo-sync-server { inherit todo; };
       in {
         packages = {
           default = todo;
