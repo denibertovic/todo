@@ -46,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,6 +69,14 @@ fun ListScreen(
 ) {
     val items by viewModel.items.collectAsState()
     val context = LocalContext.current
+
+    // Items currently animating out via swipe-to-complete. They are
+    // hidden from the list so LazyColumn never sees their key move to
+    // a new sort position (which would cause an unwanted scroll jump).
+    // Cleared when `items` changes, at which point the item reappears
+    // silently at its new position off-screen.
+    val dismissingIds = remember { mutableStateListOf<String>() }
+    LaunchedEffect(items) { dismissingIds.clear() }
 
     // Collect one-shot events (toasts)
     LaunchedEffect(Unit) {
@@ -106,10 +115,13 @@ fun ListScreen(
         itemsWithMeta,
         viewModel.selectedProjects.toList(),
         viewModel.selectedContexts.toList(),
+        dismissingIds.toList(),
     ) {
         val projSet = viewModel.selectedProjects.toSet()
         val ctxSet = viewModel.selectedContexts.toSet()
+        val dismissSet = dismissingIds.toSet()
         itemsWithMeta
+            .filter { it.entity.itemId !in dismissSet }
             .filter { matchesFilters(it, projSet, ctxSet) }
             .sortedWith(listWithMetaOrdering)
     }
@@ -242,6 +254,7 @@ fun ListScreen(
                                 itemId = item.itemId,
                                 isCompleted = item.completed,
                                 onComplete = {
+                                    dismissingIds.add(item.itemId)
                                     viewModel.toggleComplete(item.itemId, item.completed)
                                 },
                             ) {

@@ -53,6 +53,10 @@ class SwipeToActionState {
     var isEdgeSwipe by mutableStateOf(false)
     var isDismissing by mutableStateOf(false)
     var measuredHeightPx by mutableIntStateOf(0)
+
+    // Snapshot of isCompleted captured at drag start so the color
+    // doesn't flip mid-animation when the database recomposes.
+    var completedAtDragStart by mutableStateOf(false)
 }
 
 @Composable
@@ -83,8 +87,11 @@ fun SwipeableRow(
 
     val progress = (state.offsetX.value / state.rowWidthPx).coerceIn(0f, 1f)
 
-    val swipeColor = if (isCompleted) TodoColors.swipeUncomplete() else TodoColors.swipeComplete()
-    val swipeIcon = if (isCompleted) Icons.AutoMirrored.Filled.Undo else Icons.Default.Done
+    // Use the snapshot from drag start while animating so the color
+    // doesn't flip if the composable recomposes mid-gesture.
+    val effectiveCompleted = if (state.isDismissing || state.isEdgeSwipe) state.completedAtDragStart else isCompleted
+    val swipeColor = if (effectiveCompleted) TodoColors.swipeUncomplete() else TodoColors.swipeComplete()
+    val swipeIcon = if (effectiveCompleted) Icons.AutoMirrored.Filled.Undo else Icons.Default.Done
     val bgColor = swipeColor.copy(alpha = progress.coerceIn(0f, 1f))
     val iconAlpha = ((progress / COMMIT_FRACTION) * 1.5f).coerceIn(0f, 1f)
 
@@ -131,6 +138,7 @@ fun SwipeableRow(
                                 state.isEdgeSwipe =
                                     startOffset.x <= state.rowWidthPx * EDGE_ZONE_FRACTION
                                 state.hasPassedThreshold = false
+                                state.completedAtDragStart = isCompleted
                             }
                         },
                         onDragEnd = {
@@ -140,7 +148,9 @@ fun SwipeableRow(
                             ) {
                                 state.isDismissing = true
                                 view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                                onComplete()
+                                // Fire onComplete AFTER the collapse animation so the
+                                // sort-order change doesn't yank the row to the bottom
+                                // of the list while the user is still watching it.
                                 scope.launch {
                                     state.offsetX.animateTo(
                                         state.rowWidthPx * 1.2f,
@@ -148,12 +158,11 @@ fun SwipeableRow(
                                     )
                                     launch { state.rowAlpha.animateTo(0f) }
                                     state.rowHeight.animateTo(0f, animationSpec = tween(200))
-                                    // Reset for potential recomposition with new data
-                                    state.isDismissing = false
-                                    state.offsetX.snapTo(0f)
-                                    state.rowHeight.snapTo(1f)
-                                    state.rowAlpha.snapTo(1f)
-                                    state.measuredHeightPx = 0
+                                    // Fire the action after the row has collapsed.
+                                    // State reset is handled by the LaunchedEffect
+                                    // on isCompleted so the row stays invisible
+                                    // until the list recomposes at the new position.
+                                    onComplete()
                                 }
                             } else {
                                 scope.launch { state.offsetX.animateTo(0f) }
