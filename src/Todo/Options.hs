@@ -72,7 +72,7 @@ todoCmds env = subparser (  cmdList env
 cmdList env = command "ls" infos
     where infos = info (options <**> helper) desc
           desc = progDesc "List todos"
-          options = ListTodos <$> (many $ argument str (metavar "+project/@context"))
+          options = ListTodos <$> (many $ argument str (metavar "+project/@context/due"))
 
 cmdPullRemotes env = command "pull" infos
     where infos = info (options <**> helper) desc

@@ -13,7 +13,8 @@ import           Control.Monad      (when, forever)
 import           Control.Monad      (forM)
 import qualified Data.ByteString    as BS
 import           Data.Either        (isRight)
-import           Data.List          (nubBy, sort)
+import           Data.List          (nubBy, sortBy)
+import           Data.Time.Calendar (Day)
 import qualified Data.Map.Strict    as Map
 import           Data.Maybe         (catMaybes)
 import qualified Data.List.Index    as LX
@@ -115,30 +116,82 @@ mkContext (x:xs) = case x of
   '@' -> MetadataContext $ Context $ T.pack xs
   _   -> MetadataContext $ Context $ T.pack (x:xs)
 
+-- | Extract the due date from a todo item's metadata, if any.
+getDueDate :: TodoItem -> Maybe Day
+getDueDate item = case [d | MetadataTag (TagDueDate d) <- tMetadata item] of
+  (d:_) -> Just d
+  []    -> Nothing
+
+-- | Check if a todo item is tagged with due:next.
+isDueNext :: TodoItem -> Bool
+isDueNext item = any (\m -> case m of MetadataTag TagNext -> True; _ -> False) (tMetadata item)
+
+-- | Extract due date from a Todo wrapper (Nothing for completed items).
+todoDueDate :: Todo TodoItem -> Maybe Day
+todoDueDate (Completed _)  = Nothing
+todoDueDate (Incomplete i) = getDueDate i
+
+-- | Check if an item has any due marker (date or next).
+hasDue :: TodoItem -> Bool
+hasDue item = getDueDate item /= Nothing || isDueNext item
+
+-- | Custom sort: incomplete before completed, due/overdue items first
+--   (sorted by date, most urgent at top), then by priority.
+compareTodos :: Day -> (Int, Todo TodoItem) -> (Int, Todo TodoItem) -> Ordering
+compareTodos today (_, t1) (_, t2) = case (t1, t2) of
+  (Incomplete _, Completed _) -> LT
+  (Completed _, Incomplete _) -> GT
+  (Completed a, Completed b)  -> compare a b
+  (Incomplete a, Incomplete b) ->
+    let da = getDueDate a
+        db = getDueDate b
+        urgentA = maybe False (<= today) da || isDueNext a
+        urgentB = maybe False (<= today) db || isDueNext b
+    in case (urgentA, urgentB) of
+      (True, False) -> LT
+      (False, True) -> GT
+      (True, True)  -> case (da, db) of
+        (Just x, Just y) -> compare x y
+        (Nothing, Just _) -> LT  -- due:next before dated items
+        (Just _, Nothing) -> GT
+        (Nothing, Nothing) -> compare a b
+      (False, False) -> compare a b
+
 listTodos :: (HasLogFunc env, HasConfig env) => [T.Text] -> Bool -> RIO env ()
 listTodos filters verbose = do
   env <- ask
   let p = todoFile $ env ^. configL
-  let projects = [mkProject $ T.unpack x | x <- filters, isProject $ T.unpack x]
-  let contexts = [mkContext $ T.unpack x | x <- filters, isContext $ T.unpack x]
+  let dueFilter = "due" `elem` filters
+      otherFilters = filter (/= "due") filters
+      projects = [mkProject $ T.unpack x | x <- otherFilters, isProject $ T.unpack x]
+      contexts = [mkContext $ T.unpack x | x <- otherFilters, isContext $ T.unpack x]
   c <- liftIO $ TIO.readFile p
   ts <- liftIO $ parseOrDie p c
-  let todos =  sort $ filter (hasProjAndCtx projects contexts) $ zip [1..] ts
+  now <- liftIO getCurrentTime
+  let today = utctDay now
+      filtered = filter (hasProjAndCtx projects contexts) $ zip [1..] ts
+      filtered' = if dueFilter
+                  then filter (hasDueItem . snd) filtered
+                  else filtered
+      todos = sortBy (compareTodos today) filtered'
   case verbose of
     False -> do
-      liftIO $ mapM_ (printItem . hideVerboseItems) todos
+      liftIO $ mapM_ (printItem today . hideVerboseItems) todos
       liftIO $ printSummary (length todos) (length ts)
     True  -> do
-      liftIO $ mapM_ printItem todos
+      liftIO $ mapM_ (printItem today) todos
       liftIO $ printSummary (length todos) (length ts)
+  where
+    hasDueItem (Incomplete i) = hasDue i
+    hasDueItem (Completed _)  = False
 
 printSummary :: Int -> Int -> IO ()
 printSummary shown all = do
       putStrLn $ T.unpack "--"
       putStrLn $ T.unpack "TODO: " <> (show shown) <> " of " <> (show all) <> " tasks shown"
 
-printItem :: (Int, Todo TodoItem) -> IO ()
-printItem (lineNum, item) = colorPrintChunks $ [chunk (T.pack $ show lineNum) & fore green, chunk " ", chunkize item, chunk "\n"]
+printItem :: Day -> (Int, Todo TodoItem) -> IO ()
+printItem today (lineNum, item) = colorPrintChunks $ [chunk (T.pack $ show lineNum) & fore green, chunk " ", chunkize today item, chunk "\n"]
 
 hideVerboseItems :: (Int, Todo TodoItem) -> (Int, Todo TodoItem)
 hideVerboseItems (i, Incomplete x) = (i, Incomplete $ x{tMetadata=map hideOrigin $ tMetadata x})
@@ -148,14 +201,23 @@ hideOrigin :: Metadata -> Metadata
 hideOrigin (MetadataTag (TagOrigin (Link l))) = MetadataTag $ TagOrigin $ Link "hidden"
 hideOrigin x = x
 
-chunkize :: Todo TodoItem -> Chunk
-chunkize (Completed i) = chunk (T.pack $ show i) & fore grey
-chunkize (Incomplete i) = case (tPriority i) of
-  Just A  -> chunk (T.pack $ show i) & fore red
-  Just B  -> chunk (T.pack $ show i) & fore yellow
-  Just C  -> chunk (T.pack $ show i) & fore green
-  Just _  -> chunk (T.pack $ show i) & fore cyan
-  Nothing -> chunk (T.pack $ show i)
+chunkize :: Day -> Todo TodoItem -> Chunk
+chunkize _ (Completed i) = chunk (T.pack $ show i) & fore grey
+chunkize today (Incomplete i) = dueStyle $ priorityStyle $ chunk text
+  where
+    text = T.pack $ show i
+    isOverdue = case getDueDate i of
+      Just d  -> d < today
+      Nothing -> False
+    isDueToday = getDueDate i == Just today || isDueNext i
+    isUrgent = isOverdue || isDueToday
+    dueStyle c = if isUrgent then c & bold & underline else c
+    priorityStyle c = case tPriority i of
+      Just A  -> c & fore red
+      Just B  -> c & fore yellow
+      Just C  -> c & fore green
+      Just _  -> c & fore cyan
+      Nothing -> c
 
 colorPrintChunks = mapM_ BS.putStr . chunksToByteStrings toByteStringsColors256
 
