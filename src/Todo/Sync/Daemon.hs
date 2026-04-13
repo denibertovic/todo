@@ -1,5 +1,6 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Todo.Sync.Daemon
   ( -- * Daemon Control
@@ -25,6 +26,7 @@ import           Control.Monad             (forever, void)
 import           Data.Time.Clock           (getCurrentTime)
 import           Prelude                   (putStrLn)
 import           System.IO                 (stdout)
+import           Control.Exception         (IOException)
 import           System.Directory          (doesFileExist)
 import           System.FilePath           (takeFileName)
 import           System.FSNotify           (Event(..), WatchManager, watchDir,
@@ -165,45 +167,48 @@ handleFileChange config stateTVar lastContentTVar pendingSyncTVar = do
   let todoPath = todoFile config
   exists <- doesFileExist todoPath
   when exists $ do
-    newContent <- TIO.readFile todoPath
-    oldContent <- atomically $ readTVar lastContentTVar
+    readResult <- try (TIO.readFile todoPath) :: IO (Either IOException T.Text)
+    case readResult of
+      Left _ -> return ()  -- File locked during write, skip; periodic sync will catch up
+      Right newContent -> do
+        oldContent <- atomically $ readTVar lastContentTVar
 
-    when (newContent /= oldContent) $ do
-      atomically $ writeTVar lastContentTVar newContent
+        when (newContent /= oldContent) $ do
+          atomically $ writeTVar lastContentTVar newContent
 
-      -- Parse old and new content
-      let parseResult = parse todoParser "todo.txt" newContent
-      case parseResult of
-        Left err -> putStrLn $ "Warning: Failed to parse todo.txt: " <> show err
-        Right newTodos -> do
-          -- Get current sync state
-          state <- atomically $ readTVar stateTVar
-          now <- getCurrentTime
+          -- Parse old and new content
+          let parseResult = parse todoParser "todo.txt" newContent
+          case parseResult of
+            Left err -> putStrLn $ "Warning: Failed to parse todo.txt: " <> show err
+            Right newTodos -> do
+              -- Get current sync state
+              state <- atomically $ readTVar stateTVar
+              now <- getCurrentTime
 
-          -- Generate operations from diff (compare sync state against file)
-          let stateTodos = materializeToTodos (ssItems state)
-          ops <- diffToOperations
-                   (ssDeviceId state)
-                   now
-                   (ssItems state)
-                   stateTodos
-                   newTodos
+              -- Generate operations from diff (compare sync state against file)
+              let stateTodos = materializeToTodos (ssItems state)
+              ops <- diffToOperations
+                       (ssDeviceId state)
+                       now
+                       (ssItems state)
+                       stateTodos
+                       newTodos
 
-          -- Apply operations and update state
-          unless (null ops) $ do
-            let newState = applyOperations state ops
-                newState' = newState { ssPendingOps = ssPendingOps newState ++ ops }
-            atomically $ writeTVar stateTVar newState'
-            saveSyncState (todoDir config) newState'
+              -- Apply operations and update state
+              unless (null ops) $ do
+                let newState = applyOperations state ops
+                    newState' = newState { ssPendingOps = ssPendingOps newState ++ ops }
+                atomically $ writeTVar stateTVar newState'
+                saveSyncState (todoDir config) newState'
 
-            -- Trigger immediate sync
-            putStrLn $ "File changed, syncing " <> show (length ops) <> " operations..."
-            result <- doSync config stateTVar lastContentTVar
-            case result of
-              Left err -> putStrLn $ "Sync error: " <> show err
-              Right _  -> do
-                putStrLn "Sync complete."
-                atomically $ writeTVar pendingSyncTVar False
+                -- Trigger immediate sync
+                putStrLn $ "File changed, syncing " <> show (length ops) <> " operations..."
+                result <- doSync config stateTVar lastContentTVar
+                case result of
+                  Left err -> putStrLn $ "Sync error: " <> show err
+                  Right _  -> do
+                    putStrLn "Sync complete."
+                    atomically $ writeTVar pendingSyncTVar False
 
 -- | Periodic sync loop
 periodicSync :: SyncDaemon -> IO ()
@@ -288,10 +293,12 @@ doSync config stateTVar lastContentTVar = do
           let todos = materializeToTodos (ssItems newState)
           if null todos
             then putStrLn $ "WARNING: materializeToTodos returned 0 items (ssItems: " <> show (length (ssItems newState)) <> "), refusing to overwrite todo.txt"
-            else TIO.writeFile (todoFile config) $ T.pack $ show todos
-
-          -- Update last content to avoid triggering file watcher
-          newContent <- TIO.readFile (todoFile config)
-          atomically $ writeTVar lastContentTVar newContent
+            else do
+              let newContent = T.pack $ show todos
+              TIO.writeFile (todoFile config) newContent
+              -- Update last content to avoid triggering file watcher
+              -- (use the content we just wrote instead of reading it back,
+              -- to avoid GHC file lock contention with the fsnotify handler)
+              atomically $ writeTVar lastContentTVar newContent
 
           return $ Right ()
