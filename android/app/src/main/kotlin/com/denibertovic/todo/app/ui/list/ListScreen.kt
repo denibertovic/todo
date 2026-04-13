@@ -54,10 +54,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import android.widget.Toast
+import com.denibertovic.todo.app.ui.theme.TodoColors
 import com.denibertovic.todo.app.data.db.ItemCacheEntity
 import com.denibertovic.todo.app.data.displayMetadata
 import com.denibertovic.todo.core.types.Metadata
+import com.denibertovic.todo.core.types.Tag
+import kotlinx.datetime.Clock
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.todayIn
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -89,10 +97,18 @@ fun ListScreen(
     }
 
     // Pre-compute metadata once per item change
+    val today = remember { Clock.System.todayIn(TimeZone.currentSystemDefault()) }
     val itemsWithMeta = remember(items) {
         items.map { item ->
             val meta = item.displayMetadata()
-            ItemWithMeta(item, meta, metadataSummary(meta))
+            ItemWithMeta(
+                entity = item,
+                metadata = meta,
+                summary = metadataSummary(meta, excludeDue = true),
+                dueDate = extractDueDate(meta),
+                isDueNext = hasDueNext(meta),
+                dueLabel = extractDueLabel(meta),
+            )
         }
     }
 
@@ -115,6 +131,7 @@ fun ListScreen(
         itemsWithMeta,
         viewModel.selectedProjects.toList(),
         viewModel.selectedContexts.toList(),
+        viewModel.dueFilter,
         dismissingIds.toList(),
     ) {
         val projSet = viewModel.selectedProjects.toSet()
@@ -123,7 +140,18 @@ fun ListScreen(
         itemsWithMeta
             .filter { it.entity.itemId !in dismissSet }
             .filter { matchesFilters(it, projSet, ctxSet) }
-            .sortedWith(listWithMetaOrdering)
+            .let { list ->
+                when (viewModel.dueFilter) {
+                    ListViewModel.DueFilter.NONE -> list
+                    ListViewModel.DueFilter.TODAY -> list.filter { !it.entity.completed &&
+                        (it.dueDate?.let { d -> d <= today } == true || it.isDueNext) }
+                    ListViewModel.DueFilter.OVERDUE -> list.filter { !it.entity.completed &&
+                        it.dueDate?.let { d -> d < today } == true }
+                    ListViewModel.DueFilter.HAS_DUE_DATE -> list.filter { !it.entity.completed &&
+                        (it.dueDate != null || it.isDueNext) }
+                }
+            }
+            .sortedWith(listWithMetaOrdering(today))
     }
 
     var showFilterSheet by remember { mutableStateOf(false) }
@@ -143,8 +171,10 @@ fun ListScreen(
                 contexts = availableContexts,
                 selectedProjects = viewModel.selectedProjects,
                 selectedContexts = viewModel.selectedContexts,
+                dueFilter = viewModel.dueFilter,
                 onToggleProject = viewModel::toggleProjectFilter,
                 onToggleContext = viewModel::toggleContextFilter,
+                onToggleDueFilter = viewModel::toggleDueFilter,
                 onClearAll = viewModel::clearFilters,
             )
         }
@@ -223,6 +253,21 @@ fun ListScreen(
                                 },
                             )
                         }
+                        if (viewModel.dueFilter != ListViewModel.DueFilter.NONE) {
+                            val label = when (viewModel.dueFilter) {
+                                ListViewModel.DueFilter.TODAY -> "Today"
+                                ListViewModel.DueFilter.OVERDUE -> "Overdue"
+                                ListViewModel.DueFilter.HAS_DUE_DATE -> "Has due date"
+                                else -> ""
+                            }
+                            AssistChip(
+                                onClick = { viewModel.toggleDueFilter(viewModel.dueFilter) },
+                                label = { Text(label) },
+                                trailingIcon = {
+                                    Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.padding(0.dp))
+                                },
+                            )
+                        }
                         viewModel.selectedContexts.toList().forEach { c ->
                             AssistChip(
                                 onClick = { viewModel.toggleContextFilter(c) },
@@ -242,11 +287,18 @@ fun ListScreen(
                 ) {
                     items(filtered, key = { it.entity.itemId }) { iwm ->
                         val item = iwm.entity
+                        val isUrgent = !item.completed &&
+                            (iwm.dueDate?.let { it <= today } == true || iwm.isDueNext)
+                        val isOverdue = !item.completed &&
+                            iwm.dueDate?.let { it < today } == true
                         if (viewModel.inSelectionMode) {
                             SelectableTodoRow(
                                 item = item,
                                 metaSummary = iwm.summary,
                                 isSelected = item.itemId in viewModel.selectedItems,
+                                isUrgent = isUrgent,
+                                isOverdue = isOverdue,
+                                dueLabel = iwm.dueLabel,
                                 onToggle = { viewModel.toggleItemSelection(item.itemId) },
                             )
                         } else {
@@ -261,6 +313,9 @@ fun ListScreen(
                                 TodoRow(
                                     item = item,
                                     metaSummary = iwm.summary,
+                                    isUrgent = isUrgent,
+                                    isOverdue = isOverdue,
+                                    dueLabel = iwm.dueLabel,
                                     onTap = { onEditItem(item.itemId) },
                                     onLongPress = { viewModel.startSelection(item.itemId) },
                                 )
@@ -278,12 +333,16 @@ private fun SelectableTodoRow(
     item: ItemCacheEntity,
     metaSummary: String,
     isSelected: Boolean,
+    isUrgent: Boolean,
+    isOverdue: Boolean,
+    dueLabel: String?,
     onToggle: () -> Unit,
 ) {
     val containerColor = if (isSelected)
         MaterialTheme.colorScheme.primaryContainer
     else
         MaterialTheme.colorScheme.surfaceContainer
+    val urgentColor = if (isOverdue) TodoColors.overdue() else TodoColors.dueToday()
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -293,8 +352,14 @@ private fun SelectableTodoRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (isUrgent) Modifier.drawBehind {
+                    drawRect(urgentColor, size = Size(4.dp.toPx(), size.height))
+                } else Modifier)
                 .clickable(onClick = onToggle)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(
+                    start = if (isUrgent) 20.dp else 16.dp,
+                    end = 16.dp, top = 14.dp, bottom = 14.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -309,6 +374,9 @@ private fun SelectableTodoRow(
                 priority = item.priority,
                 completed = item.completed,
                 metaSummary = metaSummary,
+                isUrgent = isUrgent,
+                isOverdue = isOverdue,
+                dueLabel = dueLabel,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -320,9 +388,13 @@ private fun SelectableTodoRow(
 private fun TodoRow(
     item: ItemCacheEntity,
     metaSummary: String,
+    isUrgent: Boolean,
+    isOverdue: Boolean,
+    dueLabel: String?,
     onTap: () -> Unit,
     onLongPress: () -> Unit = {},
 ) {
+    val urgentColor = if (isOverdue) TodoColors.overdue() else TodoColors.dueToday()
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -333,8 +405,14 @@ private fun TodoRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(if (isUrgent) Modifier.drawBehind {
+                    drawRect(urgentColor, size = Size(4.dp.toPx(), size.height))
+                } else Modifier)
                 .combinedClickable(onClick = onTap, onLongClick = onLongPress)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(
+                    start = if (isUrgent) 20.dp else 16.dp,
+                    end = 16.dp, top = 14.dp, bottom = 14.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TodoItemContent(
@@ -342,6 +420,9 @@ private fun TodoRow(
                 priority = item.priority,
                 completed = item.completed,
                 metaSummary = metaSummary,
+                isUrgent = isUrgent,
+                isOverdue = isOverdue,
+                dueLabel = dueLabel,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -355,8 +436,10 @@ private fun FilterSheetContent(
     contexts: List<String>,
     selectedProjects: List<String>,
     selectedContexts: List<String>,
+    dueFilter: ListViewModel.DueFilter,
     onToggleProject: (String) -> Unit,
     onToggleContext: (String) -> Unit,
+    onToggleDueFilter: (ListViewModel.DueFilter) -> Unit,
     onClearAll: () -> Unit,
 ) {
     Column(
@@ -371,9 +454,35 @@ private fun FilterSheetContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Filters", style = MaterialTheme.typography.titleLarge)
-            if (selectedProjects.isNotEmpty() || selectedContexts.isNotEmpty()) {
+            if (selectedProjects.isNotEmpty() || selectedContexts.isNotEmpty() || dueFilter != ListViewModel.DueFilter.NONE) {
                 AssistChip(onClick = onClearAll, label = { Text("Clear all") })
             }
+        }
+
+        Text(
+            "Due dates",
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            FilterChip(
+                selected = dueFilter == ListViewModel.DueFilter.TODAY,
+                onClick = { onToggleDueFilter(ListViewModel.DueFilter.TODAY) },
+                label = { Text("Today") },
+            )
+            FilterChip(
+                selected = dueFilter == ListViewModel.DueFilter.OVERDUE,
+                onClick = { onToggleDueFilter(ListViewModel.DueFilter.OVERDUE) },
+                label = { Text("Overdue") },
+            )
+            FilterChip(
+                selected = dueFilter == ListViewModel.DueFilter.HAS_DUE_DATE,
+                onClick = { onToggleDueFilter(ListViewModel.DueFilter.HAS_DUE_DATE) },
+                label = { Text("Has due date") },
+            )
         }
 
         if (projects.isNotEmpty()) {
@@ -427,6 +536,9 @@ internal data class ItemWithMeta(
     val entity: ItemCacheEntity,
     val metadata: List<Metadata>,
     val summary: String,
+    val dueDate: LocalDate? = null,
+    val isDueNext: Boolean = false,
+    val dueLabel: String? = null,
 )
 
 internal fun matchesFilters(
@@ -442,26 +554,62 @@ internal fun matchesFilters(
     return projectMatch && contextMatch
 }
 
-internal fun metadataSummary(metadata: List<Metadata>): String =
-    metadata.joinToString(" ") { m ->
-        when (m) {
-            is Metadata.ProjectM -> "+${m.project.name}"
-            is Metadata.ContextM -> "@${m.context.name}"
-            is Metadata.TagM -> m.tag.render()
-            is Metadata.Str -> m.value
-            is Metadata.LinkM -> m.link.url
+internal fun metadataSummary(metadata: List<Metadata>, excludeDue: Boolean = false): String =
+    metadata
+        .filter { m ->
+            !(excludeDue && m is Metadata.TagM && (m.tag is Tag.DueDate || m.tag is Tag.Next))
+        }
+        .joinToString(" ") { m ->
+            when (m) {
+                is Metadata.ProjectM -> "+${m.project.name}"
+                is Metadata.ContextM -> "@${m.context.name}"
+                is Metadata.TagM -> m.tag.render()
+                is Metadata.Str -> m.value
+                is Metadata.LinkM -> m.link.url
+            }
+        }
+
+internal fun listWithMetaOrdering(today: LocalDate) = Comparator<ItemWithMeta> { a, b ->
+    val completeCmp = a.entity.completed.compareTo(b.entity.completed)
+    if (completeCmp != 0) return@Comparator completeCmp
+
+    val urgentA = !a.entity.completed && (a.dueDate?.let { it <= today } == true || a.isDueNext)
+    val urgentB = !b.entity.completed && (b.dueDate?.let { it <= today } == true || b.isDueNext)
+    if (urgentA && !urgentB) return@Comparator -1
+    if (!urgentA && urgentB) return@Comparator 1
+    if (urgentA && urgentB) {
+        val da = a.dueDate
+        val db = b.dueDate
+        if (da == null && db != null) return@Comparator -1  // due:next before dated
+        if (da != null && db == null) return@Comparator 1
+        if (da != null && db != null) {
+            val dateCmp = da.compareTo(db)
+            if (dateCmp != 0) return@Comparator dateCmp
         }
     }
 
-internal val listWithMetaOrdering = Comparator<ItemWithMeta> { a, b ->
-    val completeCmp = a.entity.completed.compareTo(b.entity.completed)
-    if (completeCmp != 0) return@Comparator completeCmp
-    val priA = priorityRank(a.entity.priority)
-    val priB = priorityRank(b.entity.priority)
-    val priCmp = priA.compareTo(priB)
+    val priCmp = priorityRank(a.entity.priority).compareTo(priorityRank(b.entity.priority))
     if (priCmp != 0) return@Comparator priCmp
     b.entity.createdAt.compareTo(a.entity.createdAt)
 }
 
 private fun priorityRank(priority: String?): Int =
     if (priority == null) Int.MAX_VALUE else priority[0] - 'A'
+
+private fun extractDueDate(metadata: List<Metadata>): LocalDate? =
+    metadata.filterIsInstance<Metadata.TagM>()
+        .mapNotNull { (it.tag as? Tag.DueDate)?.date }
+        .firstOrNull()
+
+private fun hasDueNext(metadata: List<Metadata>): Boolean =
+    metadata.any { it is Metadata.TagM && it.tag is Tag.Next }
+
+private fun extractDueLabel(metadata: List<Metadata>): String? =
+    metadata.filterIsInstance<Metadata.TagM>()
+        .firstNotNullOfOrNull { m ->
+            when (m.tag) {
+                is Tag.DueDate -> m.tag.render()
+                is Tag.Next -> m.tag.render()
+                else -> null
+            }
+        }

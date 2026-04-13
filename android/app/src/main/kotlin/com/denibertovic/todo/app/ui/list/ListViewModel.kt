@@ -32,7 +32,10 @@ class ListViewModel(
     // Filter state — survives configuration changes
     val selectedProjects = mutableStateListOf<String>()
     val selectedContexts = mutableStateListOf<String>()
-    val activeFilterCount: Int get() = selectedProjects.size + selectedContexts.size
+    var dueFilter by mutableStateOf(DueFilter.NONE)
+    val activeFilterCount: Int get() = selectedProjects.size + selectedContexts.size + if (dueFilter != DueFilter.NONE) 1 else 0
+
+    enum class DueFilter { NONE, TODAY, OVERDUE, HAS_DUE_DATE }
 
     // Multi-select state
     val selectedItems = mutableStateListOf<String>()
@@ -113,9 +116,14 @@ class ListViewModel(
         if (context in selectedContexts) selectedContexts.remove(context) else selectedContexts.add(context)
     }
 
+    fun toggleDueFilter(filter: DueFilter) {
+        dueFilter = if (dueFilter == filter) DueFilter.NONE else filter
+    }
+
     fun clearFilters() {
         selectedProjects.clear()
         selectedContexts.clear()
+        dueFilter = DueFilter.NONE
     }
 
     sealed class Event {

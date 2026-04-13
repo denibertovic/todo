@@ -27,6 +27,13 @@ object TodoColors {
     }
 
     @Composable
+    fun overdue(): Color = MaterialTheme.colorScheme.error
+
+    @Composable
+    fun dueToday(): Color =
+        if (isSystemInDarkTheme()) Color(0xFFFFB74D) else Color(0xFFFB8C00)
+
+    @Composable
     fun swipeComplete(): Color =
         if (isSystemInDarkTheme()) Color(0xFF66BB6A) else Color(0xFF43A047)
 

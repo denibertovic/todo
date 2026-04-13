@@ -22,17 +22,40 @@ fun TodoItemContent(
     priority: String?,
     completed: Boolean,
     metaSummary: String,
+    isUrgent: Boolean = false,
+    isOverdue: Boolean = false,
+    dueLabel: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val color = TodoColors.priority(priority, completed)
     Column(modifier = modifier) {
         val priorityLabel = priority?.let { "($it) " } ?: ""
+        val decoration = when {
+            completed -> TextDecoration.LineThrough
+            isUrgent -> TextDecoration.Underline
+            else -> TextDecoration.None
+        }
         Text(
             text = priorityLabel + description,
             color = color,
-            fontWeight = if (priority != null) FontWeight.SemiBold else FontWeight.Normal,
-            textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None,
+            fontWeight = if (isUrgent || priority != null) FontWeight.Bold else FontWeight.Normal,
+            textDecoration = decoration,
         )
+        if (dueLabel != null) {
+            val dueColor = when {
+                completed -> MaterialTheme.colorScheme.onSurfaceVariant
+                isOverdue -> TodoColors.overdue()
+                isUrgent -> TodoColors.dueToday()
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            Text(
+                text = dueLabel,
+                style = MaterialTheme.typography.bodySmall,
+                color = dueColor,
+                fontWeight = if (isUrgent && !completed) FontWeight.SemiBold else FontWeight.Normal,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
         if (metaSummary.isNotEmpty()) {
             Text(
                 text = metaSummary,
