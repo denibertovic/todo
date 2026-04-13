@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Sell
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,6 +42,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -53,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -97,6 +102,7 @@ fun EditScreen(
     var showPrioritySheet by remember { mutableStateOf(false) }
     var showProjectSheet by remember { mutableStateOf(false) }
     var showContextSheet by remember { mutableStateOf(false) }
+    var showTagSheet by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
 
     // Priority sheet
@@ -158,8 +164,19 @@ fun EditScreen(
         )
     }
 
-    // Date picker
+    // Tag picker sheet
+    if (showTagSheet) {
+        TagPickerSheet(
+            selected = viewModel.itemTags.toList(),
+            onAdd = { k, v -> viewModel.itemTags.add(k to v) },
+            onRemove = { viewModel.itemTags.remove(it) },
+            onDismiss = { showTagSheet = false },
+        )
+    }
+
+    // Due date picker
     if (showDatePicker) {
+        var dueMode by remember { mutableStateOf(if (viewModel.isDueNext) 1 else 0) }
         val datePickerState = rememberDatePickerState(
             initialSelectedDateMillis = viewModel.dueDate?.let {
                 it.toEpochDays().toLong() * 86400000L
@@ -169,18 +186,25 @@ fun EditScreen(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { millis ->
-                        viewModel.dueDate = Instant.fromEpochMilliseconds(millis)
-                            .toLocalDateTime(TimeZone.UTC).date
+                    if (dueMode == 1) {
+                        viewModel.dueDate = null
+                        viewModel.isDueNext = true
+                    } else {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            viewModel.isDueNext = false
+                            viewModel.dueDate = Instant.fromEpochMilliseconds(millis)
+                                .toLocalDateTime(TimeZone.UTC).date
+                        }
                     }
                     showDatePicker = false
                 }) { Text("OK") }
             },
             dismissButton = {
                 Row {
-                    if (viewModel.dueDate != null) {
+                    if (viewModel.dueDate != null || viewModel.isDueNext) {
                         TextButton(onClick = {
                             viewModel.dueDate = null
+                            viewModel.isDueNext = false
                             showDatePicker = false
                         }) { Text("Clear") }
                     }
@@ -188,7 +212,47 @@ fun EditScreen(
                 }
             },
         ) {
-            DatePicker(state = datePickerState)
+            Column {
+                SingleChoiceSegmentedButtonRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    SegmentedButton(
+                        selected = dueMode == 0,
+                        onClick = { dueMode = 0 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    ) { Text("Date") }
+                    SegmentedButton(
+                        selected = dueMode == 1,
+                        onClick = { dueMode = 1 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    ) { Text("Next") }
+                }
+                if (dueMode == 0) {
+                    DatePicker(state = datePickerState)
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(360.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            "due:next",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Mark as due next time you review your list",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -227,14 +291,14 @@ fun EditScreen(
                 Text(it, color = MaterialTheme.colorScheme.error)
             }
 
-            // Raw editor (toggleable)
+            // Raw preview (read-only)
             AnimatedVisibility(visible = viewModel.showRaw) {
                 OutlinedTextField(
                     value = viewModel.rawText,
-                    onValueChange = { viewModel.rawText = it },
+                    onValueChange = {},
+                    readOnly = true,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Raw todo.txt") },
-                    placeholder = { Text("(A) buy milk +groceries @store due:2026-04-20") },
+                    label = { Text("Raw todo.txt (preview)") },
                     singleLine = false,
                     minLines = 3,
                 )
@@ -293,11 +357,30 @@ fun EditScreen(
                         MetadataCard(
                             icon = Icons.Default.CalendarMonth,
                             label = "Due date",
-                            value = viewModel.dueDate?.toString(),
-                            isSet = viewModel.dueDate != null,
+                            value = when {
+                                viewModel.isDueNext -> "due:next"
+                                viewModel.dueDate != null -> viewModel.dueDate.toString()
+                                else -> null
+                            },
+                            isSet = viewModel.dueDate != null || viewModel.isDueNext,
                             onClick = { showDatePicker = true },
                             modifier = Modifier.weight(1f),
                         )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        MetadataCard(
+                            icon = Icons.Default.Sell,
+                            label = "Tags",
+                            value = if (viewModel.itemTags.isNotEmpty()) viewModel.itemTags.joinToString(", ") { "${it.first}:${it.second}" } else null,
+                            isSet = viewModel.itemTags.isNotEmpty(),
+                            onClick = { showTagSheet = true },
+                            modifier = Modifier.weight(1f),
+                        )
+                        // Empty spacer to keep the grid aligned
+                        Spacer(Modifier.weight(1f))
                     }
 
                     Spacer(Modifier.height(16.dp))
@@ -445,6 +528,92 @@ private fun PickerSheet(
                     }
                 },
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun TagPickerSheet(
+    selected: List<Pair<String, String>>,
+    onAdd: (String, String) -> Unit,
+    onRemove: (Pair<String, String>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var newKey by remember { mutableStateOf("") }
+    var newValue by remember { mutableStateOf("") }
+
+    fun addTag() {
+        val k = newKey.trim()
+        val v = newValue.trim()
+        if (k.isNotBlank() && v.isNotBlank() && (k to v) !in selected) {
+            onAdd(k, v)
+        }
+        newKey = ""
+        newValue = ""
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Tags", style = MaterialTheme.typography.titleLarge)
+
+            if (selected.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    selected.forEach { tag ->
+                        InputChip(
+                            selected = true,
+                            onClick = { onRemove(tag) },
+                            label = { Text("${tag.first}:${tag.second}") },
+                            trailingIcon = {
+                                Icon(Icons.Default.Close, contentDescription = "Remove")
+                            },
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = newKey,
+                    onValueChange = { newKey = it },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("Key") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                )
+                OutlinedTextField(
+                    value = newValue,
+                    onValueChange = { newValue = it },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("Value") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { addTag() }),
+                    trailingIcon = {
+                        if (newKey.isNotBlank() && newValue.isNotBlank()) {
+                            IconButton(onClick = { addTag() }) {
+                                Icon(Icons.Default.Add, contentDescription = "Add")
+                            }
+                        }
+                    },
+                )
+            }
         }
     }
 }
