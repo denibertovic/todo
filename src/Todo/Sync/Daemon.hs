@@ -1,6 +1,5 @@
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module Todo.Sync.Daemon
   ( -- * Daemon Control
@@ -22,15 +21,16 @@ import           Control.Concurrent        (threadDelay)
 import           Control.Concurrent.STM    (TVar, atomically, newTVarIO,
                                            readTVar, writeTVar)
 import           Control.Concurrent.Async  (Async, async, cancel)
-import           Control.Monad             (forever, void)
+import           Control.Monad             (forever)
 import           Data.Time.Clock           (getCurrentTime)
+import qualified Data.ByteString.Char8     as BS8
 import           Prelude                   (putStrLn)
 import           System.IO                 (stdout)
-import           Control.Exception         (IOException)
 import           System.Directory          (doesFileExist)
-import           System.FilePath           (takeFileName)
-import           System.FSNotify           (Event(..), WatchManager, watchDir,
-                                           startManager, stopManager)
+import           System.INotify            (INotify, EventVariety(..), Event(..),
+                                           WatchDescriptor,
+                                           initINotify, killINotify,
+                                           addWatch, removeWatch)
 import qualified Data.Text.IO              as TIO
 import           Text.Parsec               (parse)
 
@@ -41,14 +41,39 @@ import           Todo.Sync.CRDT
 import           Todo.Sync.Store
 import           Todo.Sync.Client
 
+-- | Debounce delay in microseconds (200ms)
+debounceDelayMicros :: Int
+debounceDelayMicros = 200000
+
+-- | Gate that suppresses the file watcher while the daemon itself is writing.
+newtype WriteGate = WriteGate { unWriteGate :: TVar Bool }
+
+newWriteGate :: IO WriteGate
+newWriteGate = WriteGate <$> newTVarIO False
+
+-- | Check whether the gate is currently held (i.e. a daemon write is in progress).
+isWriteGateHeld :: WriteGate -> IO Bool
+isWriteGateHeld = atomically . readTVar . unWriteGate
+
+-- | Run an IO action while holding the write gate open.  The gate is always
+--   released, even if the action throws.
+withWriteGate :: WriteGate -> IO a -> IO a
+withWriteGate (WriteGate tv) =
+  bracket_
+    (atomically $ writeTVar tv True)
+    (atomically $ writeTVar tv False)
+
 -- | Sync daemon state
 data SyncDaemon = SyncDaemon
-  { sdConfig       :: !TodoConfig
-  , sdWatchManager :: !WatchManager
-  , sdSyncThread   :: Async ()  -- Lazy! Set after async starts
-  , sdState        :: !(TVar SyncState)
-  , sdLastContent  :: !(TVar T.Text)
-  , sdPendingSync  :: !(TVar Bool)
+  { sdConfig        :: !TodoConfig
+  , sdINotify       :: !INotify
+  , sdWatchDesc     :: !WatchDescriptor
+  , sdSyncThread    :: Async ()  -- Lazy! Set after async starts
+  , sdState         :: !(TVar SyncState)
+  , sdLastContent   :: !(TVar T.Text)
+  , sdPendingSync   :: !(TVar Bool)
+  , sdWriteGate     :: !WriteGate
+  , sdDebounceTimer :: !(TVar (Maybe (Async ())))
   }
 
 -- | Start the sync daemon
@@ -65,9 +90,11 @@ startSyncDaemon config = do
     Nothing -> initSyncState (todoDir config) (syncDeviceName syncCfg)
 
   -- Initialize TVars
-  stateTVar <- newTVarIO state
+  stateTVar       <- newTVarIO state
   lastContentTVar <- newTVarIO ""
   pendingSyncTVar <- newTVarIO False
+  writeGate       <- newWriteGate
+  debounceTVar    <- newTVarIO Nothing
 
   -- Read initial file content and reconcile with sync state
   exists <- doesFileExist (todoFile config)
@@ -100,27 +127,25 @@ startSyncDaemon config = do
           saveSyncState (todoDir config) newState'
 
           -- Sync immediately
-          result <- doSync config stateTVar lastContentTVar
+          result <- doSync config stateTVar lastContentTVar writeGate
           case result of
             Left err -> putStrLn $ "Startup sync error: " <> show err
             Right _  -> putStrLn "Startup reconciliation complete."
 
-  -- Start watch manager
-  watchMgr <- startManager
-
-  -- Start file watcher (pass components directly, not the daemon)
-  watchTodoFiles config watchMgr stateTVar lastContentTVar pendingSyncTVar
-
-  -- Create daemon structure (now fully initialized)
-  daemonTVar <- newTVarIO undefined  -- Will hold the daemon for periodicSync
+  -- Start inotify watcher
+  inotify <- initINotify
+  wd <- watchTodoFiles config inotify stateTVar lastContentTVar pendingSyncTVar writeGate debounceTVar
 
   let daemon = SyncDaemon
-        { sdConfig       = config
-        , sdWatchManager = watchMgr
-        , sdSyncThread   = undefined  -- Set below
-        , sdState        = stateTVar
-        , sdLastContent  = lastContentTVar
-        , sdPendingSync  = pendingSyncTVar
+        { sdConfig        = config
+        , sdINotify       = inotify
+        , sdWatchDesc     = wd
+        , sdSyncThread    = undefined  -- Set below
+        , sdState         = stateTVar
+        , sdLastContent   = lastContentTVar
+        , sdPendingSync   = pendingSyncTVar
+        , sdWriteGate     = writeGate
+        , sdDebounceTimer = debounceTVar
         }
 
   -- Start periodic sync thread
@@ -138,77 +163,93 @@ startSyncDaemon config = do
 -- | Stop the sync daemon
 stopSyncDaemon :: SyncDaemon -> IO ()
 stopSyncDaemon daemon = do
-  stopManager (sdWatchManager daemon)
+  mbTimer <- atomically $ readTVar (sdDebounceTimer daemon)
+  mapM_ cancel mbTimer
+  removeWatch (sdWatchDesc daemon)
+  killINotify (sdINotify daemon)
   cancel (sdSyncThread daemon)
 
--- | Watch todo files for changes
-watchTodoFiles :: TodoConfig -> WatchManager -> TVar SyncState -> TVar T.Text -> TVar Bool -> IO ()
-watchTodoFiles config watchMgr stateTVar lastContentTVar pendingSyncTVar = do
-  let dir = todoDir config
-      shouldWatch event = case event of
-        Added path _ _     -> isTodoFile path
-        Modified path _ _  -> isTodoFile path
-        Removed path _ _   -> isTodoFile path
-        Unknown path _ _ _ -> False
-        _                  -> False  -- Handle any other event types
+-- | Watch todo files for changes using inotify CloseWrite events.
+--   CloseWrite fires only after the writing file handle is closed, avoiding
+--   the race condition where the handler tries to read a file that is still
+--   being written to.
+watchTodoFiles :: TodoConfig -> INotify -> TVar SyncState -> TVar T.Text
+               -> TVar Bool -> WriteGate -> TVar (Maybe (Async ()))
+               -> IO WatchDescriptor
+watchTodoFiles config inotify stateTVar lastContentTVar pendingSyncTVar writeGate debounceTVar = do
+  let dir = BS8.pack (todoDir config)
+  addWatch inotify [CloseWrite] dir $ \event ->
+    case event of
+      Closed False (Just filename) True
+        | filename `elem` ["todo.txt", "done.txt"] -> do
+            -- Skip events caused by our own writes (write gate)
+            held <- isWriteGateHeld writeGate
+            unless held $
+              debounceFileChange config stateTVar lastContentTVar
+                                pendingSyncTVar writeGate debounceTVar
+      _ -> return ()
 
-      isTodoFile path =
-        let name = takeFileName path
-        in name `elem` ["todo.txt", "done.txt"]
-
-      handleEvent event = when (shouldWatch event) $ do
-        handleFileChange config stateTVar lastContentTVar pendingSyncTVar
-
-  void $ watchDir watchMgr dir (const True) handleEvent
+-- | Debounce file change events: cancel any pending handler and schedule a new
+--   one after a short delay, so rapid successive writes (e.g. atomic saves via
+--   rename) are coalesced into a single handler invocation.
+debounceFileChange :: TodoConfig -> TVar SyncState -> TVar T.Text
+                   -> TVar Bool -> WriteGate -> TVar (Maybe (Async ()))
+                   -> IO ()
+debounceFileChange config stateTVar lastContentTVar pendingSyncTVar writeGate debounceTVar = do
+  -- Cancel any existing debounce timer
+  mbTimer <- atomically $ readTVar debounceTVar
+  mapM_ cancel mbTimer
+  -- Schedule new handler after debounce delay
+  timer <- async $ do
+    threadDelay debounceDelayMicros
+    handleFileChange config stateTVar lastContentTVar pendingSyncTVar writeGate
+  atomically $ writeTVar debounceTVar (Just timer)
 
 -- | Handle a file change event
-handleFileChange :: TodoConfig -> TVar SyncState -> TVar T.Text -> TVar Bool -> IO ()
-handleFileChange config stateTVar lastContentTVar pendingSyncTVar = do
+handleFileChange :: TodoConfig -> TVar SyncState -> TVar T.Text -> TVar Bool -> WriteGate -> IO ()
+handleFileChange config stateTVar lastContentTVar pendingSyncTVar writeGate = do
   let todoPath = todoFile config
   exists <- doesFileExist todoPath
   when exists $ do
-    readResult <- try (TIO.readFile todoPath) :: IO (Either IOException T.Text)
-    case readResult of
-      Left _ -> return ()  -- File locked during write, skip; periodic sync will catch up
-      Right newContent -> do
-        oldContent <- atomically $ readTVar lastContentTVar
+    newContent <- TIO.readFile todoPath
+    oldContent <- atomically $ readTVar lastContentTVar
 
-        when (newContent /= oldContent) $ do
-          atomically $ writeTVar lastContentTVar newContent
+    when (newContent /= oldContent) $ do
+      atomically $ writeTVar lastContentTVar newContent
 
-          -- Parse old and new content
-          let parseResult = parse todoParser "todo.txt" newContent
-          case parseResult of
-            Left err -> putStrLn $ "Warning: Failed to parse todo.txt: " <> show err
-            Right newTodos -> do
-              -- Get current sync state
-              state <- atomically $ readTVar stateTVar
-              now <- getCurrentTime
+      -- Parse old and new content
+      let parseResult = parse todoParser "todo.txt" newContent
+      case parseResult of
+        Left err -> putStrLn $ "Warning: Failed to parse todo.txt: " <> show err
+        Right newTodos -> do
+          -- Get current sync state
+          state <- atomically $ readTVar stateTVar
+          now <- getCurrentTime
 
-              -- Generate operations from diff (compare sync state against file)
-              let stateTodos = materializeToTodos (ssItems state)
-              ops <- diffToOperations
-                       (ssDeviceId state)
-                       now
-                       (ssItems state)
-                       stateTodos
-                       newTodos
+          -- Generate operations from diff (compare sync state against file)
+          let stateTodos = materializeToTodos (ssItems state)
+          ops <- diffToOperations
+                   (ssDeviceId state)
+                   now
+                   (ssItems state)
+                   stateTodos
+                   newTodos
 
-              -- Apply operations and update state
-              unless (null ops) $ do
-                let newState = applyOperations state ops
-                    newState' = newState { ssPendingOps = ssPendingOps newState ++ ops }
-                atomically $ writeTVar stateTVar newState'
-                saveSyncState (todoDir config) newState'
+          -- Apply operations and update state
+          unless (null ops) $ do
+            let newState = applyOperations state ops
+                newState' = newState { ssPendingOps = ssPendingOps newState ++ ops }
+            atomically $ writeTVar stateTVar newState'
+            saveSyncState (todoDir config) newState'
 
-                -- Trigger immediate sync
-                putStrLn $ "File changed, syncing " <> show (length ops) <> " operations..."
-                result <- doSync config stateTVar lastContentTVar
-                case result of
-                  Left err -> putStrLn $ "Sync error: " <> show err
-                  Right _  -> do
-                    putStrLn "Sync complete."
-                    atomically $ writeTVar pendingSyncTVar False
+            -- Trigger immediate sync
+            putStrLn $ "File changed, syncing " <> show (length ops) <> " operations..."
+            result <- doSync config stateTVar lastContentTVar writeGate
+            case result of
+              Left err -> putStrLn $ "Sync error: " <> show err
+              Right _  -> do
+                putStrLn "Sync complete."
+                atomically $ writeTVar pendingSyncTVar False
 
 -- | Periodic sync loop
 periodicSync :: SyncDaemon -> IO ()
@@ -248,11 +289,11 @@ triggerSync = performSync
 
 -- | Perform a sync operation
 performSync :: SyncDaemon -> IO (Either SyncError ())
-performSync daemon = doSync (sdConfig daemon) (sdState daemon) (sdLastContent daemon)
+performSync daemon = doSync (sdConfig daemon) (sdState daemon) (sdLastContent daemon) (sdWriteGate daemon)
 
 -- | Core sync logic - can be called from file watcher or periodic sync
-doSync :: TodoConfig -> TVar SyncState -> TVar T.Text -> IO (Either SyncError ())
-doSync config stateTVar lastContentTVar = do
+doSync :: TodoConfig -> TVar SyncState -> TVar T.Text -> WriteGate -> IO (Either SyncError ())
+doSync config stateTVar lastContentTVar writeGate = do
   let syncCfg = todoSync config
 
   if not (syncEnabled syncCfg)
@@ -295,10 +336,10 @@ doSync config stateTVar lastContentTVar = do
             then putStrLn $ "WARNING: materializeToTodos returned 0 items (ssItems: " <> show (length (ssItems newState)) <> "), refusing to overwrite todo.txt"
             else do
               let newContent = T.pack $ show todos
-              TIO.writeFile (todoFile config) newContent
-              -- Update last content to avoid triggering file watcher
-              -- (use the content we just wrote instead of reading it back,
-              -- to avoid GHC file lock contention with the fsnotify handler)
-              atomically $ writeTVar lastContentTVar newContent
+              -- Write gate: signal the file watcher to ignore this write.
+              -- withWriteGate ensures the gate is released even if writeFile throws.
+              withWriteGate writeGate $ do
+                TIO.writeFile (todoFile config) newContent
+                atomically $ writeTVar lastContentTVar newContent
 
           return $ Right ()
