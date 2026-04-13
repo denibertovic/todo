@@ -23,14 +23,12 @@ import           Control.Concurrent.STM    (TVar, atomically, newTVarIO,
 import           Control.Concurrent.Async  (Async, async, cancel)
 import           Control.Monad             (forever)
 import           Data.Time.Clock           (getCurrentTime)
-import qualified Data.ByteString.Char8     as BS8
 import           Prelude                   (putStrLn)
 import           System.IO                 (stdout)
 import           System.Directory          (doesFileExist)
-import           System.INotify            (INotify, EventVariety(..), Event(..),
-                                           WatchDescriptor,
-                                           initINotify, killINotify,
-                                           addWatch, removeWatch)
+import           System.FilePath           (takeFileName)
+import           System.FSNotify           (Event(..), WatchManager, StopListening,
+                                           watchDir, startManager, stopManager)
 import qualified Data.Text.IO              as TIO
 import           Text.Parsec               (parse)
 
@@ -66,8 +64,8 @@ withWriteGate (WriteGate tv) =
 -- | Sync daemon state
 data SyncDaemon = SyncDaemon
   { sdConfig        :: !TodoConfig
-  , sdINotify       :: !INotify
-  , sdWatchDesc     :: !WatchDescriptor
+  , sdWatchManager  :: !WatchManager
+  , sdStopWatching  :: !StopListening
   , sdSyncThread    :: Async ()  -- Lazy! Set after async starts
   , sdState         :: !(TVar SyncState)
   , sdLastContent   :: !(TVar T.Text)
@@ -132,14 +130,14 @@ startSyncDaemon config = do
             Left err -> putStrLn $ "Startup sync error: " <> show err
             Right _  -> putStrLn "Startup reconciliation complete."
 
-  -- Start inotify watcher
-  inotify <- initINotify
-  wd <- watchTodoFiles config inotify stateTVar lastContentTVar pendingSyncTVar writeGate debounceTVar
+  -- Start file watcher
+  watchMgr <- startManager
+  stopWatching <- watchTodoFiles config watchMgr stateTVar lastContentTVar pendingSyncTVar writeGate debounceTVar
 
   let daemon = SyncDaemon
         { sdConfig        = config
-        , sdINotify       = inotify
-        , sdWatchDesc     = wd
+        , sdWatchManager  = watchMgr
+        , sdStopWatching  = stopWatching
         , sdSyncThread    = undefined  -- Set below
         , sdState         = stateTVar
         , sdLastContent   = lastContentTVar
@@ -165,29 +163,29 @@ stopSyncDaemon :: SyncDaemon -> IO ()
 stopSyncDaemon daemon = do
   mbTimer <- atomically $ readTVar (sdDebounceTimer daemon)
   mapM_ cancel mbTimer
-  removeWatch (sdWatchDesc daemon)
-  killINotify (sdINotify daemon)
+  sdStopWatching daemon
+  stopManager (sdWatchManager daemon)
   cancel (sdSyncThread daemon)
 
--- | Watch todo files for changes using inotify CloseWrite events.
---   CloseWrite fires only after the writing file handle is closed, avoiding
---   the race condition where the handler tries to read a file that is still
---   being written to.
-watchTodoFiles :: TodoConfig -> INotify -> TVar SyncState -> TVar T.Text
+-- | Watch todo files for changes using fsnotify.
+--   On Linux, CloseWrite fires only after the writing file handle is closed.
+--   On macOS, we get Modified events instead; the debounce handles that case.
+watchTodoFiles :: TodoConfig -> WatchManager -> TVar SyncState -> TVar T.Text
                -> TVar Bool -> WriteGate -> TVar (Maybe (Async ()))
-               -> IO WatchDescriptor
-watchTodoFiles config inotify stateTVar lastContentTVar pendingSyncTVar writeGate debounceTVar = do
-  let dir = BS8.pack (todoDir config)
-  addWatch inotify [CloseWrite] dir $ \event ->
-    case event of
-      Closed False (Just filename) True
-        | filename `elem` ["todo.txt", "done.txt"] -> do
-            -- Skip events caused by our own writes (write gate)
-            held <- isWriteGateHeld writeGate
-            unless held $
-              debounceFileChange config stateTVar lastContentTVar
-                                pendingSyncTVar writeGate debounceTVar
-      _ -> return ()
+               -> IO StopListening
+watchTodoFiles config watchMgr stateTVar lastContentTVar pendingSyncTVar writeGate debounceTVar = do
+  let dir = todoDir config
+      isTodoFile path = takeFileName path `elem` ["todo.txt", "done.txt"]
+      shouldHandle event = case event of
+        CloseWrite path _ _  -> isTodoFile path
+        Modified path _ _    -> isTodoFile path
+        _                    -> False
+  watchDir watchMgr dir shouldHandle $ \_ -> do
+    -- Skip events caused by our own writes (write gate)
+    held <- isWriteGateHeld writeGate
+    unless held $
+      debounceFileChange config stateTVar lastContentTVar
+                        pendingSyncTVar writeGate debounceTVar
 
 -- | Debounce file change events: cancel any pending handler and schedule a new
 --   one after a short delay, so rapid successive writes (e.g. atomic saves via

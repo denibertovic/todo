@@ -36,7 +36,7 @@ library
     , directory
     , filepath
     , forge
-    , hinotify
+    , fsnotify
     , http-client
     , http-client-tls
     , http-types
@@ -91,7 +91,7 @@ executable todo
     , directory
     , filepath
     , forge
-    , hinotify
+    , fsnotify
     , http-client
     , http-client-tls
     , http-types
@@ -138,7 +138,7 @@ test-suite todo-test
     , directory
     , filepath
     , forge
-    , hinotify
+    , fsnotify
     , hspec
     , http-client
     , http-client-tls
